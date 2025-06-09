@@ -84,7 +84,34 @@ class ScraperService {
       };
 
     } catch (error) {
-      throw new Error(`Failed to analyze documentation: ${error.message}`);
+      // Enhanced error handling for better user experience
+      let userFriendlyMessage = 'Failed to analyze documentation';
+
+      if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
+        userFriendlyMessage = 'The URL could not be reached. Please check if the URL is correct and the website is accessible.';
+      } else if (error.code === 'ETIMEDOUT') {
+        userFriendlyMessage = 'The request timed out. The website might be slow to respond or temporarily unavailable.';
+      } else if (error.response) {
+        // HTTP error responses
+        const status = error.response.status;
+        if (status === 404) {
+          userFriendlyMessage = 'The page was not found (404). Please check if the URL is correct.';
+        } else if (status === 403) {
+          userFriendlyMessage = 'Access to this page is forbidden (403). The website might be blocking automated requests.';
+        } else if (status === 500) {
+          userFriendlyMessage = 'The website is experiencing server issues (500). Please try again later.';
+        } else if (status >= 400 && status < 500) {
+          userFriendlyMessage = `The page returned an error (${status}). Please check if the URL is correct.`;
+        } else if (status >= 500) {
+          userFriendlyMessage = `The website is experiencing server issues (${status}). Please try again later.`;
+        }
+      } else if (error.message.includes('530') || error.message.includes('Unknown status code')) {
+        userFriendlyMessage = 'The URL appears to be invalid or the website is not accessible. Please check the URL and try again.';
+      } else if (error.message.includes('Invalid URL')) {
+        userFriendlyMessage = 'The provided URL is not valid. Please enter a complete URL starting with http:// or https://';
+      }
+
+      throw new Error(userFriendlyMessage);
     }
   }
 
