@@ -70,24 +70,22 @@ button, .button {
   font-weight: 700;
   font-family: var(--font-display);
   cursor: pointer;
-  transition: all 0.15s ease-out;
+  transition: background-color 0.15s ease, color 0.15s ease;
   color: var(--bauhaus-black);
   background-color: var(--bauhaus-yellow);
-  box-shadow: var(--shadow-distance) var(--shadow-distance) 0px var(--bauhaus-black);
   text-transform: uppercase;
   text-align: center;
   text-decoration: none;
 }
 
 button:hover, .button:hover {
-  transform: translate(calc(var(--shadow-distance) * -0.25), calc(var(--shadow-distance) * -0.25));
-  box-shadow: var(--shadow-distance-hover) var(--shadow-distance-hover) 0px var(--bauhaus-black);
+  background-color: var(--bauhaus-red);
+  color: var(--bauhaus-white);
 }
 
 button:active, .button:active {
-  transform: translate(calc(var(--shadow-distance) * 0.5), calc(var(--shadow-distance) * 0.5));
-  box-shadow: calc(var(--shadow-distance) * 0.5) calc(var(--shadow-distance) * 0.5) 0px var(--bauhaus-black);
-  transition: all 0.05s ease-in;
+  background-color: var(--bauhaus-blue);
+  color: var(--bauhaus-white);
 }
 
 button:disabled, .button:disabled {
@@ -95,8 +93,6 @@ button:disabled, .button:disabled {
   color: var(--bauhaus-black);
   opacity: 0.7;
   cursor: not-allowed;
-  box-shadow: none;
-  transform: none;
 }
 
 button.primary, .button.primary {

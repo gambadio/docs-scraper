@@ -247,19 +247,16 @@
     cursor: pointer;
     border: 4px solid var(--bauhaus-black);
     border-radius: 8px;
-    background-color: var(--bauhaus-bg);
-    color: var(--text-light);
-    box-shadow: var(--shadow-distance) var(--shadow-distance) 0 var(--bauhaus-black);
-    transition: all 0.15s ease-out;
+    background-color: var(--bauhaus-card);
+    color: var(--text-dark);
+    transition: background-color 0.15s ease;
   }
   .link-item:hover {
-    transform: translate(calc(var(--shadow-distance) * -0.25), calc(var(--shadow-distance) * -0.25));
-    box-shadow: var(--shadow-distance-hover) var(--shadow-distance-hover) 0 var(--bauhaus-black);
+    background-color: var(--bauhaus-light-gray);
   }
   .link-item.selected {
     background-color: var(--bauhaus-blue);
-    border-color: var(--bauhaus-blue);
-    box-shadow: var(--shadow-distance) var(--shadow-distance) 0 var(--bauhaus-red);
+    color: var(--text-light);
   }
   .link-info {
     flex-grow: 1;
@@ -267,7 +264,7 @@
   }
   .link-title {
     font-family: var(--font-display);
-    color: var(--text-light);
+    color: inherit;
     margin: 0;
   }
   .link-url {

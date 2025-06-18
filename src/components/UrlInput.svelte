@@ -80,13 +80,24 @@
           {placeholder}
           disabled={isLoading}
         />
-        <div class="go-button" on:click={handleSubmit} class:loading={isLoading}>
+        <button
+          type="button"
+          class="go-button"
+          on:click={handleSubmit}
+          class:loading={isLoading}
+          disabled={isLoading}
+          aria-label="Submit URL"
+        >
           {#if isLoading}
-            <div class="spinner"></div>
+            <div class="spinner">
+              <div class="dot1"></div>
+              <div class="dot2"></div>
+              <div class="dot3"></div>
+            </div>
           {:else}
             <span>GO!</span>
           {/if}
-        </div>
+        </button>
       </div>
     </div>
     {#if error}
@@ -177,62 +188,51 @@
     position: relative;
     display: flex;
     align-items: center;
-  }
-  .input-wrapper::before {
-    content: '';
-    position: absolute;
-    bottom: -8px;
-    left: 8px;
-    width: calc(100% - 16px);
-    height: 100%;
-    background: var(--bauhaus-black);
-    z-index: 0;
+    border: 4px solid var(--bauhaus-black);
     border-radius: 16px;
+    background-color: var(--bauhaus-white);
+    overflow: hidden;
   }
   input {
     flex-grow: 1;
-    border: 4px solid var(--bauhaus-black);
+    border: none;
     padding: 1.2rem 1.5rem;
     font-size: 1.2rem;
-    border-radius: 16px;
-    background-color: var(--bauhaus-white);
+    background-color: transparent;
     color: var(--bauhaus-black);
     font-family: var(--font-sans);
-    transition: all 0.2s;
-    position: relative;
-    z-index: 2;
-    width: 100%;
+    outline: none;
+    height: 60px;
     box-sizing: border-box;
-    padding-right: 140px; /* Space for the button */
   }
   input:focus {
     outline: none;
-    border-color: var(--bauhaus-blue);
-    transform: translate(-2px, -2px);
   }
   .go-button {
-    width: 120px;
-    height: calc(100% - 8px);
-    position: absolute;
-    right: 4px;
-    top: 4px;
-    z-index: 3;
-    background: var(--bauhaus-black);
-    color: var(--bauhaus-white);
-    border-radius: 12px;
+    height: 60px;
+    padding: 0 1.5rem;
+    background: var(--bauhaus-yellow);
+    color: var(--bauhaus-black);
+    border: none;
+    border-left: 4px solid var(--bauhaus-black);
     display: flex;
     align-items: center;
     justify-content: center;
     font-family: var(--font-display);
-    font-size: 1.2rem;
+    font-size: 1.1rem;
+    font-weight: 900;
+    text-transform: uppercase;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: background-color 0.15s ease;
+    flex-shrink: 0;
   }
   .go-button:hover {
     background: var(--bauhaus-red);
+    color: var(--bauhaus-white);
   }
   .go-button.loading {
     background: var(--bauhaus-blue);
+    color: var(--bauhaus-white);
   }
   .error-message {
     color: var(--bauhaus-red);
