@@ -1,66 +1,78 @@
 <script lang="ts">
-  import Header from './components/Header.svelte';
   import UrlInput from './components/UrlInput.svelte';
   import AnalysisResults from './components/AnalysisResults.svelte';
   import ScrapingProgress from './components/ScrapingProgress.svelte';
   import { appState } from './stores/appState';
+  import { analyzeUrl, startScraping as apiStartScraping, downloadPdfs, getProgress } from './services/api';
+
+  let progressInterval: ReturnType<typeof setInterval>;
+
+  async function handleUrlSubmit(event: CustomEvent) {
+    try {
+      const analysis = await analyzeUrl(event.detail.url);
+      appState.setAnalysis(analysis);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function handleStartScraping(event: CustomEvent) {
+    if (!$appState.analysis) return;
+    try {
+      const session = await apiStartScraping($appState.analysis.baseUrl, event.detail.links);
+      appState.startScraping(session.sessionId, event.detail.links.length);
+      
+      progressInterval = setInterval(async () => {
+        if (!$appState.sessionId) return;
+        const newProgress = await getProgress($appState.sessionId);
+        appState.updateProgress(newProgress);
+        if (newProgress.status === 'completed' || newProgress.status === 'failed') {
+          clearInterval(progressInterval);
+        }
+      }, 2000);
+
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  function handleReset() {
+    appState.reset();
+    if (progressInterval) clearInterval(progressInterval);
+  }
+
+  async function handleDownload() {
+    if (!$appState.sessionId) return;
+    try {
+      await downloadPdfs($appState.sessionId);
+    } catch (err) {
+      console.error(err);
+    }
+  }
 </script>
 
-<main class="app">
-  <Header />
-  
-  <div class="container">
-    {#if $appState.step === 'input'}
-      <UrlInput />
-    {:else if $appState.step === 'analysis'}
-      <AnalysisResults />
-    {:else if $appState.step === 'scraping'}
-      <ScrapingProgress />
-    {/if}
-  </div>
+<main>
+  {#if $appState.step === 'input'}
+    <UrlInput on:submit={handleUrlSubmit} />
+  {:else if $appState.step === 'analysis'}
+    <AnalysisResults
+      analysis={$appState.analysis}
+      on:startScraping={handleStartScraping}
+      on:reset={handleReset}
+    />
+  {:else if $appState.step === 'scraping'}
+    <ScrapingProgress
+      progress={$appState.progress}
+      baseUrl={$appState.analysis?.baseUrl || ''}
+      on:download={handleDownload}
+      on:reset={handleReset}
+    />
+  {/if}
 </main>
 
 <style>
-  :global(*, *::before, *::after) {
-    box-sizing: border-box;
-  }
-
-  :global(body) {
-    margin: 0;
-    padding: 0;
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
-    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-    min-height: 100vh;
-    line-height: 1.6;
-  }
-
-  :global(h1, h2, h3, h4, h5, h6) {
-    font-weight: 700;
-    line-height: 1.2;
-    margin: 0 0 1rem 0;
-  }
-
-  :global(p) {
-    margin: 0 0 1rem 0;
-  }
-
-  .app {
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .container {
-    flex: 1;
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 2rem;
+  main {
     width: 100%;
-  }
-
-  @media (max-width: 768px) {
-    .container {
-      padding: 1rem;
-    }
+    min-height: 100vh;
   }
 </style>

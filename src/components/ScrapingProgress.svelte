@@ -1,481 +1,218 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
-  import { appState } from '../stores/appState';
-  import { getProgress, downloadPdfs } from '../services/api';
-  
-  let progressInterval;
-  let isDownloading = false;
-  
-  $: sessionId = $appState.sessionId;
-  $: progress = $appState.progress;
+  import type { Progress } from '../stores/appState';
+  import { createEventDispatcher } from 'svelte';
 
-  onMount(() => {
-    if (sessionId) {
-      updateProgress();
-      progressInterval = setInterval(updateProgress, 2000);
-    }
-  });
+  export let progress: Progress | null = null;
+  export let baseUrl: string = '';
 
-  onDestroy(() => {
-    if (progressInterval) {
-      clearInterval(progressInterval);
-    }
-  });
+  const dispatch = createEventDispatcher();
 
-  async function updateProgress() {
-    try {
-      const newProgress = await getProgress(sessionId);
-      appState.updateProgress(newProgress);
-      
-      if (newProgress.status === 'completed' || newProgress.status === 'failed') {
-        clearInterval(progressInterval);
-      }
-    } catch (error) {
-      console.error('Failed to update progress:', error);
-    }
+  function handleDownload() {
+    dispatch('download');
   }
 
-  async function handleDownload() {
-    if (progress?.status !== 'completed') return;
-    
-    isDownloading = true;
-    try {
-      await downloadPdfs(sessionId);
-    } catch (error) {
-      console.error('Download failed:', error);
-    } finally {
-      isDownloading = false;
-    }
-  }
-
-  function getStatusColor(status) {
-    switch (status) {
-      case 'running': return '#3182CE';
-      case 'completed': return '#38A169';
-      case 'failed': return '#E53E3E';
-      default: return '#718096';
-    }
+  function handleReset() {
+    dispatch('reset');
   }
 </script>
 
-<div class="progress-container">
-  <div class="progress-header">
-    <div class="status-indicator" style="background-color: {getStatusColor(progress?.status)}"></div>
-    <h2>
-      {#if progress?.status === 'running'}
-        Scraping in Progress...
-      {:else if progress?.status === 'completed'}
-        Scraping Complete!
-      {:else if progress?.status === 'failed'}
-        Scraping Failed
-      {:else}
-        Processing...
-      {/if}
-    </h2>
-  </div>
-
-  {#if progress}
-    <div class="progress-card">
-      <div class="progress-stats">
-        <div class="stat-group">
-          <div class="stat">
-            <span class="stat-value">{progress.completed || 0}</span>
-            <span class="stat-label">Completed</span>
-          </div>
-          <div class="stat">
-            <span class="stat-value">{progress.failed || 0}</span>
-            <span class="stat-label">Failed</span>
-          </div>
-          <div class="stat">
-            <span class="stat-value">{progress.total || 0}</span>
-            <span class="stat-label">Total</span>
+{#if progress}
+  <div class="page-wrapper {progress.status}">
+    
+    {#if progress.status === 'running'}
+      <div class="running-wrapper">
+        <h2 class="running-title">THE MACHINES ARE WORKING</h2>
+        <div class="progress-ui">
+          <svg class="progress-ring" viewBox="0 0 100 100">
+            <circle class="bg" cx="50" cy="50" r="45" />
+            <circle class="fg" cx="50" cy="50" r="45" style="stroke-dasharray: {2 * Math.PI * 45}; stroke-dashoffset: {2 * Math.PI * 45 * (1 - progress.progress / 100)};" />
+          </svg>
+          <div class="progress-text">
+            <span>{progress.progress}</span>%
           </div>
         </div>
+        <p class="running-subtitle">Grabbing bits and bytes from...<br/>{baseUrl}</p>
+      </div>
 
-        <div class="progress-bar-container">
-          <div class="progress-bar">
-            <div 
-              class="progress-fill" 
-              style="width: {progress.progress || 0}%; background-color: {getStatusColor(progress.status)}"
-            ></div>
-          </div>
-          <span class="progress-text">{progress.progress || 0}%</span>
+    {:else if progress.status === 'completed'}
+      <div class="completed-wrapper">
+        <div class="graphic-placeholder">
+          <!--
+            Placeholder for a fun vector graphic.
+            I recommend adding a triumphant or cool SVG illustration here.
+            For example, a robot holding a stack of papers, or a stylized factory producing documents.
+            It should be colorful and match the Bauhaus theme.
+            Example: <img src="/triumphant-robot.svg" alt="Scraping Complete!">
+          -->
+          <svg class="placeholder-svg" viewBox="0 0 100 100">
+            <rect x="10" y="10" width="80" height="80" stroke-width="4" />
+            <path d="M30 70 L 50 40 L 70 70 Z" stroke-width="4" />
+            <circle cx="50" cy="30" r="10" stroke-width="4" />
+          </svg>
+          <span>Your awesome graphic here!</span>
+        </div>
+        <h2>Success! It is done.</h2>
+        <p>{progress.completed} pages are now yours for the taking.</p>
+        <div class="action-buttons">
+          <button on:click={handleDownload} class="secondary">Download ZIP</button>
+          <button on:click={handleReset}>Scrape Again</button>
         </div>
       </div>
 
-      {#if progress.status === 'completed'}
-        <div class="completion-section">
-          <div class="success-icon">✅</div>
-          <h3>All Done!</h3>
-          <p>Successfully scraped {progress.completed} pages. Your PDFs are ready for download.</p>
-          
-          <button 
-            class="download-btn"
-            class:loading={isDownloading}
-            on:click={handleDownload}
-            disabled={isDownloading}
-          >
-            {#if isDownloading}
-              <div class="spinner"></div>
-              <span>Preparing Download...</span>
-            {:else}
-              <span>📥 Download All PDFs</span>
-            {/if}
-          </button>
-        </div>
-      {:else if progress.status === 'failed'}
-        <div class="error-section">
-          <div class="error-icon">❌</div>
-          <h3>Scraping Failed</h3>
-          <p>{progress.error || 'An unexpected error occurred during scraping.'}</p>
-          
-          {#if progress.errors && progress.errors.length > 0}
-            <details class="error-details">
-              <summary>View Error Details ({progress.errors.length} errors)</summary>
-              <div class="error-list">
-                {#each progress.errors as error}
-                  <div class="error-item">
-                    <div class="error-url">{error.url}</div>
-                    <div class="error-message">{error.error}</div>
-                  </div>
-                {/each}
-              </div>
-            </details>
-          {/if}
-        </div>
-      {:else if progress.status === 'running'}
-        <div class="running-section">
-          <div class="loading-animation">
-            <div class="loading-dot"></div>
-            <div class="loading-dot"></div>
-            <div class="loading-dot"></div>
-          </div>
-          <p>Scraping pages and generating PDFs... This may take a few minutes.</p>
-        </div>
-      {/if}
+    {:else if progress.status === 'failed'}
+      <div class="failed-wrapper">
+        <div class="failed-icon">!</div>
+        <h2>Houston, we have a problem.</h2>
+        <p>{progress.error || 'Something went very, very wrong. The internet goblins strike again.'}</p>
+        <button on:click={handleReset} class="primary">Let's Go Again</button>
+      </div>
+    {/if}
 
-      {#if progress.pdfs && progress.pdfs.length > 0}
-        <div class="files-section">
-          <h4>Generated Files ({progress.pdfs.length})</h4>
-          <div class="files-list">
-            {#each progress.pdfs as pdf}
-              <div class="file-item">
-                <div class="file-icon">📄</div>
-                <div class="file-info">
-                  <div class="file-name">{pdf.filename}</div>
-                  <div class="file-url">{pdf.url}</div>
-                </div>
-              </div>
-            {/each}
-          </div>
-        </div>
-      {/if}
-    </div>
-  {/if}
-</div>
+  </div>
+{/if}
 
 <style>
-  .progress-container {
-    max-width: 800px;
+  .page-wrapper {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    box-sizing: border-box;
+    position: relative;
+    overflow: hidden;
+    text-align: center;
+  }
+
+  /* Running State */
+  .running {
+    background-color: var(--bauhaus-bg);
+    color: var(--bauhaus-white);
+  }
+  .running-wrapper {
+    position: relative;
+  }
+  .running-title {
+    font-size: clamp(1.5rem, 5vw, 2rem);
+    color: var(--bauhaus-white);
+    opacity: 0.5;
+    margin-bottom: 2rem;
+    position: relative;
+  }
+  .progress-ui {
+    position: relative;
+    width: clamp(250px, 40vw, 400px);
     margin: 0 auto;
   }
-
-  .progress-header {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    margin-bottom: 2rem;
+  .progress-ring {
+    transform: rotate(-90deg);
   }
-
-  .status-indicator {
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    animation: pulse 2s infinite;
+  .progress-ring circle {
+    fill: transparent;
+    stroke-width: 8;
   }
-
-  @keyframes pulse {
-    0% { opacity: 1; }
-    50% { opacity: 0.5; }
-    100% { opacity: 1; }
+  .progress-ring .bg {
+    stroke: rgba(255,255,255,0.1);
   }
-
-  .progress-header h2 {
-    font-size: 1.75rem;
-    font-weight: 800;
-    color: #1a202c;
-    margin: 0;
+  .progress-ring .fg {
+    stroke: var(--bauhaus-yellow);
+    stroke-linecap: round;
+    transition: stroke-dashoffset 0.3s;
   }
-
-  .progress-card {
-    background: white;
-    border-radius: 12px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
-    padding: 2rem;
-  }
-
-  .progress-stats {
-    margin-bottom: 2rem;
-  }
-
-  .stat-group {
-    display: flex;
-    justify-content: space-around;
-    margin-bottom: 2rem;
-  }
-
-  .stat {
-    text-align: center;
-  }
-
-  .stat-value {
-    display: block;
-    font-size: 2rem;
-    font-weight: 800;
-    color: #1a202c;
-    line-height: 1;
-  }
-
-  .stat-label {
-    font-size: 0.875rem;
-    color: #718096;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    font-weight: 600;
-  }
-
-  .progress-bar-container {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-  }
-
-  .progress-bar {
-    flex: 1;
-    height: 12px;
-    background: #f1f5f9;
-    border-radius: 6px;
-    overflow: hidden;
-  }
-
-  .progress-fill {
-    height: 100%;
-    transition: width 0.5s ease;
-    border-radius: 6px;
-  }
-
   .progress-text {
-    font-weight: 600;
-    color: #4a5568;
-    font-size: 0.875rem;
-    min-width: 3rem;
-    text-align: right;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-family: var(--font-display);
+    font-size: clamp(4rem, 10vw, 6rem);
+    color: var(--bauhaus-white);
   }
-
-  .completion-section,
-  .error-section,
-  .running-section {
-    text-align: center;
-    padding: 2rem 0;
-    border-top: 1px solid #e2e8f0;
+  .progress-text span {
+    animation: text-throb 1s ease-in-out infinite;
+  }
+  @keyframes text-throb {
+    50% { opacity: 0.8; transform: scale(1.02); }
+  }
+  .running-subtitle {
     margin-top: 2rem;
+    color: var(--bauhaus-white);
+    opacity: 0.6;
+    position: relative;
+    line-height: 1.4;
   }
 
-  .success-icon,
-  .error-icon {
-    font-size: 3rem;
-    margin-bottom: 1rem;
+  /* Completed State */
+  .completed {
+    background-color: var(--bauhaus-card);
+    color: var(--bauhaus-black);
   }
-
-  .completion-section h3,
-  .error-section h3 {
-    font-size: 1.5rem;
-    font-weight: 700;
-    margin-bottom: 0.5rem;
-  }
-
-  .completion-section h3 {
-    color: #38A169;
-  }
-
-  .error-section h3 {
-    color: #E53E3E;
-  }
-
-  .completion-section p,
-  .error-section p,
-  .running-section p {
-    color: #4a5568;
-    margin-bottom: 2rem;
-  }
-
-  .download-btn {
-    background: #38A169;
-    color: white;
-    border: none;
-    padding: 1rem 2rem;
-    border-radius: 8px;
-    font-weight: 700;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 1rem;
-  }
-
-  .download-btn:hover:not(:disabled) {
-    background: #2f855a;
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(56, 161, 105, 0.3);
-  }
-
-  .download-btn:disabled {
-    opacity: 0.7;
-    cursor: not-allowed;
-    transform: none;
-  }
-
-  .spinner {
-    width: 16px;
-    height: 16px;
-    border: 2px solid transparent;
-    border-top: 2px solid currentColor;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
-
-  .loading-animation {
+  .completed-wrapper {
     display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem;
+  }
+  .graphic-placeholder {
+    width: 200px;
+    height: 150px;
+    border: 4px dashed var(--bauhaus-light-gray);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
     justify-content: center;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
+    color: var(--bauhaus-light-gray);
+    font-weight: bold;
   }
-
-  .loading-dot {
-    width: 12px;
-    height: 12px;
-    background: #3182CE;
-    border-radius: 50%;
-    animation: bounce 1.4s ease-in-out infinite both;
+  .placeholder-svg {
+    width: 50%;
+    height: 50%;
+    fill: none;
+    stroke: var(--bauhaus-light-gray);
   }
-
-  .loading-dot:nth-child(1) { animation-delay: -0.32s; }
-  .loading-dot:nth-child(2) { animation-delay: -0.16s; }
-
-  @keyframes bounce {
-    0%, 80%, 100% {
-      transform: scale(0);
-    }
-    40% {
-      transform: scale(1);
-    }
+  .completed-wrapper h2 {
+    font-size: clamp(2.5rem, 8vw, 5rem);
   }
-
-  .error-details {
-    text-align: left;
+  .action-buttons {
+    display: flex;
+    gap: 1rem;
     margin-top: 1rem;
   }
 
-  .error-details summary {
-    cursor: pointer;
-    font-weight: 600;
-    color: #E53E3E;
-    margin-bottom: 1rem;
+  /* Failed State */
+  .failed {
+    background-color: var(--bauhaus-red);
+    color: var(--bauhaus-white);
   }
-
-  .error-list {
-    max-height: 200px;
-    overflow-y: auto;
-    border: 1px solid #fed7d7;
-    border-radius: 8px;
+  .failed-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem;
   }
-
-  .error-item {
-    padding: 1rem;
-    border-bottom: 1px solid #fed7d7;
-  }
-
-  .error-item:last-child {
-    border-bottom: none;
-  }
-
-  .error-url {
-    font-weight: 600;
-    color: #1a202c;
-    margin-bottom: 0.25rem;
-    word-break: break-all;
-  }
-
-  .error-message {
-    color: #c53030;
-    font-size: 0.875rem;
-  }
-
-  .files-section {
-    border-top: 1px solid #e2e8f0;
-    margin-top: 2rem;
-    padding-top: 2rem;
-  }
-
-  .files-section h4 {
-    font-size: 1.125rem;
-    font-weight: 700;
-    color: #1a202c;
-    margin-bottom: 1rem;
-  }
-
-  .files-list {
-    max-height: 300px;
-    overflow-y: auto;
-  }
-
-  .file-item {
+  .failed-icon {
+    width: 100px;
+    height: 100px;
+    border-radius: 50%;
+    border: 8px solid var(--bauhaus-white);
+    font-size: 4rem;
+    font-family: var(--font-display);
     display: flex;
     align-items: center;
-    gap: 1rem;
-    padding: 0.75rem;
-    border-radius: 8px;
-    transition: background-color 0.2s ease;
+    justify-content: center;
+    animation: shake 0.5s;
   }
-
-  .file-item:hover {
-    background: #f8fafc;
+  @keyframes shake {
+    10%, 90% { transform: translate3d(-1px, 0, 0); }
+    20%, 80% { transform: translate3d(2px, 0, 0); }
+    30%, 50%, 70% { transform: translate3d(-4px, 0, 0); }
+    40%, 60% { transform: translate3d(4px, 0, 0); }
   }
-
-  .file-icon {
-    font-size: 1.5rem;
+  .failed-wrapper h2 {
+    color: var(--bauhaus-white);
   }
-
-  .file-info {
-    flex: 1;
-  }
-
-  .file-name {
-    font-weight: 600;
-    color: #1a202c;
-    margin-bottom: 0.25rem;
-  }
-
-  .file-url {
-    font-size: 0.875rem;
-    color: #718096;
-    word-break: break-all;
-  }
-
-  @media (max-width: 768px) {
-    .stat-group {
-      flex-direction: column;
-      gap: 1rem;
-    }
-
-    .progress-bar-container {
-      flex-direction: column;
-      gap: 0.5rem;
-    }
+  .failed-wrapper p {
+    color: var(--bauhaus-white);
+    opacity: 0.9;
   }
 </style>

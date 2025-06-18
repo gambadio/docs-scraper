@@ -1,17 +1,17 @@
 <script lang="ts">
-  import { appState } from '../stores/appState';
-  import { startScraping } from '../services/api';
-  
-  let selectedLinks = [];
-  let isStarting = false;
-  let error = '';
+  import { createEventDispatcher } from 'svelte';
+  import type { Analysis, Link } from '../stores/appState';
 
-  $: analysis = $appState.analysis;
+  export let analysis: Analysis | null = null;
+
+  let selectedLinks: string[] = [];
   $: if (analysis?.links) {
     selectedLinks = analysis.links.map(link => link.url);
   }
 
-  function toggleLink(url) {
+  const dispatch = createEventDispatcher();
+
+  function toggleLink(url: string) {
     if (selectedLinks.includes(url)) {
       selectedLinks = selectedLinks.filter(u => u !== url);
     } else {
@@ -19,384 +19,275 @@
     }
   }
 
-  function toggleAll() {
-    if (selectedLinks.length === analysis.links.length) {
-      selectedLinks = [];
-    } else {
+  function startScraping() {
+    dispatch('startScraping', { links: selectedLinks });
+  }
+  
+  function selectAll() {
+    if (analysis) {
       selectedLinks = analysis.links.map(link => link.url);
     }
   }
 
-  async function startScrapingProcess() {
-    if (selectedLinks.length === 0) {
-      error = 'Please select at least one page to scrape';
-      return;
-    }
-
-    isStarting = true;
-    error = '';
-
-    try {
-      const linksToScrape = analysis.links.filter(link => 
-        selectedLinks.includes(link.url)
-      );
-
-      const session = await startScraping(analysis.baseUrl, linksToScrape);
-      appState.startScraping(session.sessionId, linksToScrape.length);
-    } catch (err) {
-      error = err.message || 'Failed to start scraping';
-    } finally {
-      isStarting = false;
-    }
+  function deselectAll() {
+    selectedLinks = [];
   }
 </script>
 
-<div class="analysis-container">
-  <div class="results-header">
-    <div class="site-info">
-      <h2>Site Analysis Complete</h2>
-      <p class="site-url">{analysis?.baseUrl}</p>
+{#if analysis}
+<div class="page-container">
+  <div class="summary-section">
+    <div class="summary-content">
+      <h2>I've found some stuff.</h2>
+      <p class="site-url">Looks like we're scraping <a href={analysis.baseUrl} target="_blank">{analysis.baseUrl}</a></p>
+      
       <div class="stats">
         <div class="stat">
-          <span class="stat-number">{analysis?.totalLinks || 0}</span>
-          <span class="stat-label">Pages Found</span>
+          <span class="number">{analysis.links.length}</span>
+          <span class="label">things to grab</span>
         </div>
         <div class="stat">
-          <span class="stat-number">{selectedLinks.length}</span>
-          <span class="stat-label">Selected</span>
+          <span class="number selected">{selectedLinks.length}</span>
+          <span class="label">things you want</span>
         </div>
       </div>
-    </div>
-    
-    <div class="action-buttons">
-      <button class="select-all-btn" on:click={toggleAll}>
-        {selectedLinks.length === analysis?.links?.length ? 'Deselect All' : 'Select All'}
-      </button>
-      
-      <button 
-        class="start-btn"
-        class:loading={isStarting}
-        on:click={startScrapingProcess}
-        disabled={isStarting || selectedLinks.length === 0}
-      >
-        {#if isStarting}
-          <div class="spinner"></div>
-          <span>Starting...</span>
-        {:else}
-          <span>Start Scraping ({selectedLinks.length})</span>
-        {/if}
+  
+      <button class="start-btn secondary" on:click={startScraping} disabled={selectedLinks.length === 0}>
+        Let's get scraping! ({selectedLinks.length})
       </button>
     </div>
+    <div class="summary-bg-shape"></div>
   </div>
 
-  {#if error}
-    <div class="error-message">
-      {error}
-    </div>
-  {/if}
-
-  <div class="links-container">
+  <div class="links-section">
     <div class="links-header">
-      <h3>Discovered Pages</h3>
-      <p>Select the pages you want to scrape and convert to PDF</p>
+      <h3>Pick your poison</h3>
+      <div class="selection-controls">
+        <button on:click={selectAll}>Select All</button>
+        <button on:click={deselectAll}>Deselect All</button>
+        <button class="primary" on:click={() => dispatch('reset')}>Start Over</button>
+      </div>
     </div>
-
-    <div class="links-list">
-      {#each analysis?.links || [] as link, index}
-        <div class="link-item" class:selected={selectedLinks.includes(link.url)}>
-          <label class="link-checkbox">
-            <input
-              type="checkbox"
-              checked={selectedLinks.includes(link.url)}
-              on:change={() => toggleLink(link.url)}
-            />
-            <span class="checkmark"></span>
+    <div class="links-list-wrapper">
+      <div class="links-list">
+        {#each analysis.links as link (link.url)}
+          <label class="link-item" class:selected={selectedLinks.includes(link.url)}>
+            <div class="checkbox-wrapper">
+              <input
+                type="checkbox"
+                checked={selectedLinks.includes(link.url)}
+                on:change={() => toggleLink(link.url)}
+              />
+              <div class="custom-checkbox">
+                {#if selectedLinks.includes(link.url)}
+                  <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+                {/if}
+              </div>
+            </div>
+            <div class="link-info">
+              <p class="link-title">{link.title || "No title, how mysterious..."}</p>
+              <p class="link-url">{link.url}</p>
+            </div>
+            <div class="page-count">
+              <span>{link.url.split('/').length - 3}</span>
+            </div>
           </label>
-          
-          <div class="link-content">
-            <div class="link-title">{link.title}</div>
-            <div class="link-url">{link.url}</div>
-          </div>
-          
-          <div class="link-index">{index + 1}</div>
-        </div>
-      {/each}
+        {/each}
+      </div>
     </div>
   </div>
 </div>
+{/if}
 
 <style>
-  .analysis-container {
-    max-width: 900px;
-    margin: 0 auto;
-  }
-
-  .results-header {
-    background: white;
-    padding: 2rem;
-    border-radius: 12px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
-    margin-bottom: 2rem;
+  .page-container {
     display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 2rem;
+    flex-direction: column;
+    height: 100vh;
+    background-color: var(--bauhaus-card);
   }
 
-  .site-info h2 {
-    font-size: 1.5rem;
-    font-weight: 800;
-    color: #1a202c;
+  /* Summary Section */
+  .summary-section {
+    background-color: var(--bauhaus-yellow);
+    padding: 2rem 3rem;
+    border-bottom: 4px solid var(--bauhaus-black);
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .summary-content {
+    position: relative;
+    z-index: 1;
+  }
+  .summary-content h2 {
     margin-bottom: 0.5rem;
   }
-
   .site-url {
-    color: #4a5568;
-    font-size: 0.875rem;
-    margin-bottom: 1.5rem;
-    word-break: break-all;
+    margin-bottom: 2rem;
+  }
+  .site-url a {
+    color: var(--bauhaus-black);
+    font-weight: bold;
   }
 
   .stats {
     display: flex;
-    gap: 2rem;
+    justify-content: center;
+    gap: 4rem;
+    margin-bottom: 2.5rem;
   }
-
-  .stat {
-    text-align: center;
-  }
-
-  .stat-number {
-    display: block;
-    font-size: 2rem;
-    font-weight: 800;
-    color: #3182CE;
+  .stat .number {
+    font-size: clamp(4rem, 10vw, 6rem);
     line-height: 1;
   }
-
-  .stat-label {
-    font-size: 0.75rem;
-    color: #718096;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    font-weight: 600;
+  .stat .label {
+    font-family: var(--font-display);
+    font-size: 1.2rem;
+    opacity: 0.8;
+  }
+  .stat .number.selected {
+    color: var(--bauhaus-blue);
+  }
+  
+  .start-btn {
+    padding: 1rem 2.5rem;
+    font-size: 1.2rem;
   }
 
-  .action-buttons {
+  /* Links Section */
+  .links-section {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 2rem 3rem;
+  }
+  .links-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+    flex-shrink: 0;
+  }
+  .links-header h3 {
+    color: var(--bauhaus-black);
+  }
+  .selection-controls {
     display: flex;
     gap: 1rem;
-    flex-direction: column;
-    align-items: flex-end;
+  }
+  .selection-controls button {
+    font-size: 0.9rem;
+    padding: 0.6em 1.2em;
   }
 
-  .select-all-btn {
-    background: #f7fafc;
-    color: #4a5568;
-    border: 2px solid #e2e8f0;
-    padding: 0.75rem 1.5rem;
-    border-radius: 8px;
-    font-weight: 600;
+  .links-list-wrapper {
+    flex-grow: 1;
+    overflow-y: auto;
+    margin: 0 -1rem; /* Hide scrollbar visually */
+    padding: 0 1rem;
+  }
+
+  /* Custom Checkbox */
+  .checkbox-wrapper {
+    position: relative;
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+  }
+  .link-item input[type="checkbox"] {
+    opacity: 0;
+    width: 100%;
+    height: 100%;
     cursor: pointer;
-    transition: all 0.2s ease;
-    font-size: 0.875rem;
   }
-
-  .select-all-btn:hover {
-    background: #edf2f7;
-    border-color: #cbd5e0;
-  }
-
-  .start-btn {
-    background: #E53E3E;
-    color: white;
-    border: none;
-    padding: 1rem 2rem;
-    border-radius: 8px;
-    font-weight: 700;
-    cursor: pointer;
-    transition: all 0.2s ease;
+  .custom-checkbox {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border: 4px solid var(--bauhaus-black);
+    border-radius: 4px;
+    background: var(--bauhaus-white);
+    pointer-events: none;
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    font-size: 1rem;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    justify-content: center;
+    transition: all 0.2s;
+  }
+  .link-item:hover .custom-checkbox {
+    background: var(--bauhaus-light-gray);
+  }
+  .link-item.selected .custom-checkbox {
+    background: var(--bauhaus-blue);
+  }
+  .custom-checkbox svg {
+    width: 24px;
+    height: 24px;
+    fill: var(--bauhaus-white);
+    transform: scale(0);
+    transition: transform 0.1s ease-out;
+  }
+  .link-item.selected .custom-checkbox svg {
+    transform: scale(1);
   }
 
-  .start-btn:hover:not(:disabled) {
-    background: #C53030;
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(229, 62, 62, 0.3);
-  }
-
-  .start-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    transform: none;
-  }
-
-  .spinner {
-    width: 16px;
-    height: 16px;
-    border: 2px solid transparent;
-    border-top: 2px solid currentColor;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
-
-  .error-message {
-    background: #fed7d7;
-    color: #c53030;
-    padding: 1rem;
-    border-radius: 8px;
-    margin-bottom: 2rem;
-    text-align: center;
-    border: 1px solid #feb2b2;
-  }
-
-  .links-container {
-    background: white;
-    border-radius: 12px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
-    overflow: hidden;
-  }
-
-  .links-header {
-    padding: 2rem;
-    border-bottom: 1px solid #e2e8f0;
-  }
-
-  .links-header h3 {
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: #1a202c;
-    margin-bottom: 0.5rem;
-  }
-
-  .links-header p {
-    color: #4a5568;
-    margin: 0;
-  }
-
+  /* Link Item */
   .links-list {
-    max-height: 500px;
-    overflow-y: auto;
+    display: grid;
+    gap: 1rem;
   }
-
   .link-item {
     display: flex;
     align-items: center;
-    padding: 1rem 2rem;
-    border-bottom: 1px solid #f1f5f9;
-    transition: background-color 0.2s ease;
+    gap: 1.5rem;
+    padding: 1rem;
     cursor: pointer;
+    border: 4px solid var(--bauhaus-black);
+    border-radius: 8px;
+    background-color: var(--bauhaus-bg);
+    color: var(--text-light);
+    box-shadow: var(--shadow-distance) var(--shadow-distance) 0 var(--bauhaus-black);
+    transition: all 0.15s ease-out;
   }
-
   .link-item:hover {
-    background: #f8fafc;
+    transform: translate(calc(var(--shadow-distance) * -0.25), calc(var(--shadow-distance) * -0.25));
+    box-shadow: var(--shadow-distance-hover) var(--shadow-distance-hover) 0 var(--bauhaus-black);
   }
-
   .link-item.selected {
-    background: #ebf8ff;
-    border-left: 4px solid #3182CE;
+    background-color: var(--bauhaus-blue);
+    border-color: var(--bauhaus-blue);
+    box-shadow: var(--shadow-distance) var(--shadow-distance) 0 var(--bauhaus-red);
   }
-
-  .link-checkbox {
-    display: flex;
-    align-items: center;
-    margin-right: 1rem;
-    cursor: pointer;
+  .link-info {
+    flex-grow: 1;
+    text-align: left;
   }
-
-  .link-checkbox input {
-    position: absolute;
-    opacity: 0;
-    cursor: pointer;
-  }
-
-  .checkmark {
-    height: 20px;
-    width: 20px;
-    background-color: #f7fafc;
-    border: 2px solid #e2e8f0;
-    border-radius: 4px;
-    transition: all 0.2s ease;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .link-checkbox input:checked ~ .checkmark {
-    background-color: #3182CE;
-    border-color: #3182CE;
-  }
-
-  .link-checkbox input:checked ~ .checkmark::after {
-    content: "✓";
-    color: white;
-    font-size: 12px;
-    font-weight: bold;
-  }
-
-  .link-content {
-    flex: 1;
-  }
-
   .link-title {
-    font-weight: 600;
-    color: #1a202c;
-    margin-bottom: 0.25rem;
+    font-family: var(--font-display);
+    color: var(--text-light);
+    margin: 0;
   }
-
   .link-url {
-    font-size: 0.875rem;
-    color: #718096;
+    font-size: 0.8rem;
+    opacity: 0.6;
+    margin: 0;
     word-break: break-all;
   }
-
-  .link-index {
-    width: 32px;
-    height: 32px;
-    background: #f1f5f9;
+  .page-count {
+    background-color: var(--bauhaus-red);
+    color: var(--text-light);
+    font-size: 1rem;
+    font-family: var(--font-display);
     border-radius: 50%;
+    width: 40px;
+    height: 40px;
     display: flex;
-    align-items: center;
     justify-content: center;
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: #4a5568;
-  }
-
-  .link-item.selected .link-index {
-    background: #3182CE;
-    color: white;
-  }
-
-  @media (max-width: 768px) {
-    .results-header {
-      flex-direction: column;
-      align-items: stretch;
-      text-align: center;
-    }
-
-    .action-buttons {
-      align-items: stretch;
-    }
-
-    .stats {
-      justify-content: center;
-    }
-
-    .link-item {
-      padding: 1rem;
-    }
-
-    .links-list {
-      max-height: 400px;
-    }
+    align-items: center;
+    border: 4px solid var(--bauhaus-black);
+    flex-shrink: 0;
   }
 </style>

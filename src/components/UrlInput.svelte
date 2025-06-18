@@ -1,350 +1,300 @@
 <script lang="ts">
-  import { appState } from '../stores/appState';
-  import { analyzeUrl } from '../services/api';
+  import { createEventDispatcher } from 'svelte';
   
+  const dispatch = createEventDispatcher();
+
   let url = '';
   let isLoading = false;
   let error = '';
+  let showMinigame = false;
 
-  async function handleSubmit() {
-    if (!url.trim()) {
-      error = 'Please enter a valid URL';
-      return;
-    }
+  const funnyPlaceholders = [
+    "https://docs.isuck.com",
+    "https://bauhaus-rules.com/docs",
+    "https://give-me-the-frickin-docs.com",
+    "https://scrape-me-daddy.com"
+  ];
+  let placeholder = funnyPlaceholders[0];
 
-    if (!isValidUrl(url)) {
-      error = 'Please enter a valid HTTP/HTTPS URL';
-      return;
-    }
-
-    isLoading = true;
-    error = '';
-
+  function isValidUrl(string: string) {
     try {
-      const analysis = await analyzeUrl(url);
-      appState.setAnalysis(analysis);
-    } catch (err) {
-      error = err.message || 'Failed to analyze URL';
-    } finally {
-      isLoading = false;
-    }
-  }
-
-  function isValidUrl(string) {
-    try {
-      const url = new URL(string);
-      return url.protocol === 'http:' || url.protocol === 'https:';
+      const newUrl = new URL(string);
+      return newUrl.protocol === 'http:' || newUrl.protocol === 'https:';
     } catch {
       return false;
     }
   }
 
-  function handleKeyDown(event) {
-    if (event.key === 'Enter') {
-      handleSubmit();
+  function handleSubmit() {
+    if (isLoading) return;
+    if (!url.trim() || !isValidUrl(url)) {
+      error = 'URL is borked. Please provide a real one.';
+      return;
     }
+    error = '';
+    isLoading = true;
+    // Fake delay to show loading state
+    setTimeout(() => {
+      dispatch('submit', { url });
+      isLoading = false;
+    }, 1500);
   }
+
+  function toggleMinigame() {
+    showMinigame = !showMinigame;
+  }
+
+  // Cycle through placeholders
+  setInterval(() => {
+    placeholder = funnyPlaceholders[Math.floor(Math.random() * funnyPlaceholders.length)];
+  }, 3000);
 </script>
 
-<div class="url-input-container">
-  <div class="hero-section">
-    <div class="hero-shapes">
-      <div class="shape shape-1"></div>
-      <div class="shape shape-2"></div>
-      <div class="shape shape-3"></div>
+<div class="page-wrapper">
+  <header class="main-header">
+    <div class="logo">
+      <svg width="44" height="34" viewBox="0 0 44 34" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="20" height="34" fill="#D92D20"/>
+        <rect x="24" width="20" height="34" fill="#0D69F2"/>
+      </svg>
+      <span>DocScraper</span>
     </div>
-    
-    <div class="hero-content">
-      <h2>Extract Documentation</h2>
-      <p>Enter a documentation website URL to automatically discover and scrape all pages into organized PDFs</p>
+    <div class="header-fun-zone">
+      <span class="fun-text">Bored?</span>
+      <button on:click={toggleMinigame} class="secondary">Play a Game!</button>
     </div>
-  </div>
+  </header>
 
-  <div class="input-section">
-    <div class="input-wrapper">
-      <input
-        type="url"
-        bind:value={url}
-        on:keydown={handleKeyDown}
-        placeholder="https://docs.example.com"
-        class="url-input"
-        disabled={isLoading}
-      />
-      
-      <button 
-        class="analyze-btn"
-        class:loading={isLoading}
-        on:click={handleSubmit}
-        disabled={isLoading}
-      >
-        {#if isLoading}
-          <div class="spinner"></div>
-          <span>Analyzing...</span>
-        {:else}
-          <span>Analyze Site</span>
-        {/if}
-      </button>
+  <main class="content-area">
+    <div class="intro-text">
+      <h1>Let's Snatch Some Docs</h1>
+      <p>Feed me a URL. I'll chew it up and spit out some sweet, sweet PDFs. No questions asked. Except for the URL. I need that.</p>
     </div>
 
-    {#if error}
-      <div class="error-message">
-        {error}
+    <div class="input-container">
+      <div class="input-wrapper">
+        <input
+          type="url"
+          bind:value={url}
+          on:keydown={(e) => e.key === 'Enter' && handleSubmit()}
+          {placeholder}
+          disabled={isLoading}
+        />
+        <div class="go-button" on:click={handleSubmit} class:loading={isLoading}>
+          {#if isLoading}
+            <div class="spinner"></div>
+          {:else}
+            <span>GO!</span>
+          {/if}
+        </div>
       </div>
+    </div>
+    {#if error}
+      <p class="error-message">{error}</p>
     {/if}
-  </div>
+  </main>
 
-  <div class="features">
-    <div class="feature">
-      <div class="feature-icon feature-icon-red">🔍</div>
-      <h4>Smart Detection</h4>
-      <p>Automatically finds navigation links and page structure</p>
+  {#if showMinigame}
+    <div class="minigame-placeholder">
+      <h2>Placeholder for Minigame</h2>
+      <p>Imagine a fun Bauhaus-themed minigame here. Maybe you stack geometric shapes, or play a simple arcade game. This is where you would add your interactive element.</p>
+      <p><strong>To implement this:</strong> You could create a new Svelte component (e.g., `Minigame.svelte`) and import it here. The game logic would live inside that component.</p>
+      <button on:click={toggleMinigame}>Close Game</button>
     </div>
-    
-    <div class="feature">
-      <div class="feature-icon feature-icon-blue">📄</div>
-      <h4>Clean PDFs</h4>
-      <p>Extracts content without navigation clutter</p>
+  {/if}
+
+  <footer class="main-footer">
+    <p>Made with geometric love & too much coffee.</p>
+    <div class="footer-shapes">
+      <div class="shape-sm red"></div>
+      <div class="shape-sm yellow"></div>
+      <div class="shape-sm blue"></div>
     </div>
-    
-    <div class="feature">
-      <div class="feature-icon feature-icon-yellow">⚡</div>
-      <h4>Batch Processing</h4>
-      <p>Downloads multiple pages efficiently in parallel</p>
-    </div>
-  </div>
+  </footer>
 </div>
 
 <style>
-  .url-input-container {
-    max-width: 800px;
-    margin: 0 auto;
-  }
-
-  .hero-section {
+  /* Page Layout & Shapes */
+  .page-wrapper {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    padding: 2rem 3rem;
+    box-sizing: border-box;
     position: relative;
-    text-align: center;
-    padding: 3rem 0;
     overflow: hidden;
   }
 
-  .hero-shapes {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    pointer-events: none;
-  }
-
-  .shape {
-    position: absolute;
-    border-radius: 4px;
-    opacity: 0.1;
-  }
-
-  .shape-1 {
-    width: 80px;
-    height: 80px;
-    background: #E53E3E;
-    top: 20%;
-    left: 10%;
-    transform: rotate(15deg);
-    animation: float 6s ease-in-out infinite;
-  }
-
-  .shape-2 {
-    width: 60px;
-    height: 60px;
-    background: #3182CE;
-    top: 60%;
-    right: 15%;
-    transform: rotate(-20deg);
-    animation: float 8s ease-in-out infinite reverse;
-  }
-
-  .shape-3 {
-    width: 40px;
-    height: 40px;
-    background: #D69E2E;
-    bottom: 30%;
-    left: 20%;
-    transform: rotate(45deg);
-    animation: float 7s ease-in-out infinite;
-  }
-
-  @keyframes float {
-    0%, 100% { transform: translateY(0px) rotate(var(--rotate)); }
-    50% { transform: translateY(-20px) rotate(var(--rotate)); }
-  }
-
-  .hero-content {
-    position: relative;
-    z-index: 1;
-  }
-
-  .hero-content h2 {
-    font-size: 2.5rem;
-    font-weight: 800;
-    color: #1a202c;
-    margin-bottom: 1rem;
-    letter-spacing: -0.03em;
-  }
-
-  .hero-content p {
-    font-size: 1.125rem;
-    color: #4a5568;
-    max-width: 600px;
-    margin: 0 auto;
-  }
-
-  .input-section {
-    margin-bottom: 4rem;
-  }
-
-  .input-wrapper {
+  /* Header */
+  .main-header {
     display: flex;
-    gap: 0;
-    max-width: 600px;
-    margin: 0 auto;
-    background: white;
-    border-radius: 12px;
-    padding: 8px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-    border: 2px solid transparent;
-    transition: border-color 0.3s ease;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    margin-bottom: 5vh;
   }
-
-  .input-wrapper:focus-within {
-    border-color: #3182CE;
-  }
-
-  .url-input {
-    flex: 1;
-    border: none;
-    padding: 1rem 1.25rem;
-    font-size: 1rem;
-    background: transparent;
-    outline: none;
-    border-radius: 8px;
-  }
-
-  .url-input::placeholder {
-    color: #a0aec0;
-  }
-
-  .analyze-btn {
-    background: #3182CE;
-    color: white;
-    border: none;
-    padding: 1rem 2rem;
-    border-radius: 8px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s ease;
+  .logo {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    font-size: 1rem;
-    white-space: nowrap;
+    gap: 1rem;
+    font-family: var(--font-display);
+    font-size: 1.8rem;
+    font-weight: 900;
   }
-
-  .analyze-btn:hover:not(:disabled) {
-    background: #2c5aa0;
-    transform: translateY(-1px);
+  .header-fun-zone {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
   }
-
-  .analyze-btn:disabled {
+  .fun-text {
+    font-family: var(--font-sans);
+    font-weight: 700;
     opacity: 0.7;
-    cursor: not-allowed;
   }
 
-  .spinner {
-    width: 16px;
-    height: 16px;
-    border: 2px solid transparent;
-    border-top: 2px solid currentColor;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
-
-  .error-message {
-    background: #fed7d7;
-    color: #c53030;
-    padding: 1rem;
-    border-radius: 8px;
-    margin-top: 1rem;
+  /* Main Content */
+  .content-area {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
     text-align: center;
-    border: 1px solid #feb2b2;
+  }
+  .intro-text h1 {
+    margin-bottom: 1rem;
+  }
+  .intro-text p {
+    margin-bottom: 3rem;
   }
 
-  .features {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-    gap: 2rem;
+  /* Input Area */
+  .input-container {
+    width: 100%;
+    max-width: 700px;
   }
-
-  .feature {
-    background: white;
-    padding: 2rem;
+  .input-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+  .input-wrapper::before {
+    content: '';
+    position: absolute;
+    bottom: -8px;
+    left: 8px;
+    width: calc(100% - 16px);
+    height: 100%;
+    background: var(--bauhaus-black);
+    z-index: 0;
+    border-radius: 16px;
+  }
+  input {
+    flex-grow: 1;
+    border: 4px solid var(--bauhaus-black);
+    padding: 1.2rem 1.5rem;
+    font-size: 1.2rem;
+    border-radius: 16px;
+    background-color: var(--bauhaus-white);
+    color: var(--bauhaus-black);
+    font-family: var(--font-sans);
+    transition: all 0.2s;
+    position: relative;
+    z-index: 2;
+    width: 100%;
+    box-sizing: border-box;
+    padding-right: 140px; /* Space for the button */
+  }
+  input:focus {
+    outline: none;
+    border-color: var(--bauhaus-blue);
+    transform: translate(-2px, -2px);
+  }
+  .go-button {
+    width: 120px;
+    height: calc(100% - 8px);
+    position: absolute;
+    right: 4px;
+    top: 4px;
+    z-index: 3;
+    background: var(--bauhaus-black);
+    color: var(--bauhaus-white);
     border-radius: 12px;
-    text-align: center;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-  }
-
-  .feature:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
-  }
-
-  .feature-icon {
-    width: 60px;
-    height: 60px;
-    border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 1.5rem;
-    margin: 0 auto 1rem;
+    font-family: var(--font-display);
+    font-size: 1.2rem;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .go-button:hover {
+    background: var(--bauhaus-red);
+  }
+  .go-button.loading {
+    background: var(--bauhaus-blue);
+  }
+  .error-message {
+    color: var(--bauhaus-red);
+    font-weight: bold;
+    margin-top: 1rem;
+    min-height: 1.5rem;
   }
 
-  .feature-icon-red { background: #fed7d7; }
-  .feature-icon-blue { background: #bee3f8; }
-  .feature-icon-yellow { background: #faf089; }
-
-  .feature h4 {
-    font-size: 1.125rem;
-    font-weight: 700;
-    color: #1a202c;
-    margin-bottom: 0.5rem;
+  /* Spinner Animation */
+  .spinner {
+    margin: 0 auto;
+    width: 40px;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+  }
+  .spinner > div {
+    width: 10px;
+    height: 10px;
+    background-color: var(--bauhaus-white);
+    border-radius: 100%;
+    display: inline-block;
+    animation: sk-bouncedelay 1.4s infinite ease-in-out both;
+  }
+  .spinner .dot1 { animation-delay: -0.32s; }
+  .spinner .dot2 { animation-delay: -0.16s; }
+  @keyframes sk-bouncedelay {
+    0%, 80%, 100% { transform: scale(0); }
+    40% { transform: scale(1.0); }
   }
 
-  .feature p {
-    color: #4a5568;
-    font-size: 0.875rem;
-    margin: 0;
+  /* Minigame Placeholder */
+  .minigame-placeholder {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 90%;
+    max-width: 500px;
+    background: var(--bauhaus-card);
+    border: 4px solid var(--bauhaus-black);
+    border-radius: 12px;
+    padding: 2rem;
+    box-shadow: 10px 10px 0 var(--bauhaus-black);
+    z-index: 100;
+    text-align: center;
   }
 
-  @media (max-width: 768px) {
-    .hero-content h2 {
-      font-size: 2rem;
-    }
-
-    .input-wrapper {
-      flex-direction: column;
-      gap: 0.5rem;
-    }
-
-    .analyze-btn {
-      justify-content: center;
-    }
-
-    .features {
-      grid-template-columns: 1fr;
-    }
+  /* Footer */
+  .main-footer {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 2rem;
+    margin-top: 5vh;
+    border-top: 4px solid var(--bauhaus-black);
   }
+  .footer-shapes { display: flex; gap: 0.5rem; }
+  .shape-sm { width: 20px; height: 20px; }
+  .shape-sm.red { background: var(--bauhaus-red); }
+  .shape-sm.yellow { background: var(--bauhaus-yellow); }
+  .shape-sm.blue { background: var(--bauhaus-blue); }
 </style>

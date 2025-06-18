@@ -1,6 +1,6 @@
-const API_BASE = 'http://localhost:3001/api';
+const API_BASE: string = 'http://localhost:3001/api';
 
-export async function analyzeUrl(url) {
+export async function analyzeUrl(url: string): Promise<any> {
   const response = await fetch(`${API_BASE}/scraper/analyze`, {
     method: 'POST',
     headers: {
@@ -17,7 +17,7 @@ export async function analyzeUrl(url) {
   return response.json();
 }
 
-export async function startScraping(baseUrl, links) {
+export async function startScraping(baseUrl: string, links: string[]): Promise<{ sessionId: string }> {
   const sessionId = generateSessionId();
   
   const response = await fetch(`${API_BASE}/scraper/scrape`, {
@@ -41,7 +41,7 @@ export async function startScraping(baseUrl, links) {
   return { ...result, sessionId };
 }
 
-export async function getProgress(sessionId) {
+export async function getProgress(sessionId: string): Promise<any> {
   const response = await fetch(`${API_BASE}/scraper/progress/${sessionId}`);
 
   if (!response.ok) {
@@ -52,7 +52,7 @@ export async function getProgress(sessionId) {
   return response.json();
 }
 
-export async function downloadPdfs(sessionId) {
+export async function downloadPdfs(sessionId: string): Promise<void> {
   const response = await fetch(`${API_BASE}/scraper/download/${sessionId}`);
 
   if (!response.ok) {
@@ -60,7 +60,6 @@ export async function downloadPdfs(sessionId) {
     throw new Error(error.error || 'Failed to download PDFs');
   }
 
-  // Create download link
   const blob = await response.blob();
   const url = window.URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -72,7 +71,7 @@ export async function downloadPdfs(sessionId) {
   document.body.removeChild(a);
 }
 
-function generateSessionId() {
+function generateSessionId(): string {
   return Math.random().toString(36).substring(2, 15) + 
          Math.random().toString(36).substring(2, 15);
 }
