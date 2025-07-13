@@ -74,4 +74,4 @@ router.get('/download/:sessionId', async (req, res) => {
   }
 });
 
-export default router;
+export { router as default, scraperService };

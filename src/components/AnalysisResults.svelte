@@ -101,9 +101,9 @@
 
 <style>
   .page-container {
+    min-height: 100vh;
     display: flex;
     flex-direction: column;
-    height: 100vh;
     background-color: var(--bauhaus-card);
   }
 

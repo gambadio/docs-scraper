@@ -1,263 +1,287 @@
-import puppeteer from 'puppeteer';
+/**************************************************************************
+ * ScraperService — robust Puppeteer-extra service
+ * Works on macOS / Linux / Windows, Node ≥18, Puppeteer ≥22
+ **************************************************************************/
+
+import puppeteer from 'puppeteer-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import fs from 'fs/promises';
+import { existsSync } from 'fs';
 import { load } from 'cheerio';
 import axios from 'axios';
-import { v4 as uuidv4 } from 'uuid';
-import fs from 'fs/promises';
-import { createWriteStream } from 'fs';
-import { join } from 'path';
 import archiver from 'archiver';
+import { v4 as uuidv4 } from 'uuid';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
-class ScraperService {
+puppeteer.use(StealthPlugin());
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname  = dirname(__filename);
+
+export default class ScraperService {
+  /* --------------------------------------------------  ctor / state  */
   constructor() {
-    this.sessions = new Map();
-    this.browser = null;
+    this.sessions            = new Map();
+    this.browser             = null;
+    this.browserLaunchPromise = null;
   }
 
-  async initBrowser() {
-    if (!this.browser) {
-      this.browser = await puppeteer.launch({
-        headless: 'new',
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-      });
-    }
-    return this.browser;
-  }
+  /* --------------------------------------------------  PUBLIC API  */
 
+  /** Analyse the sidebar of a docs site and return link metadata */
   async analyzeDocumentation(url) {
+    const browser = await this._getBrowser();
+    let page;
     try {
-      const response = await axios.get(url, {
-        timeout: 10000,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-      });
+      page = await browser.newPage();
+      await page.setViewport({ width: 1600, height: 1200 });
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 45_000 });
 
-      const $ = load(response.data);
-      const baseUrl = new URL(url).origin;
-      const links = [];
+      const html = await page.content();
+      const $    = load(html);
+      const base = new URL(url).origin;
 
-      // Common selectors for documentation sidebars
       const sidebarSelectors = [
         'nav a[href]',
         '.sidebar a[href]',
         '.navigation a[href]',
         '.docs-nav a[href]',
-        '.menu a[href]',
         '[role="navigation"] a[href]',
         '.toc a[href]',
-        '.nav-links a[href]'
+        '.menu a[href]',
+        '.left-sidebar a[href]',
+        'aside a[href]'
       ];
 
-      // Find navigation links
-      for (const selector of sidebarSelectors) {
-        $(selector).each((i, el) => {
+      let links = [];
+      for (const sel of sidebarSelectors) {
+        $(sel).each((_, el) => {
           const href = $(el).attr('href');
           const text = $(el).text().trim();
-          
-          if (href && text && href !== '#') {
-            let fullUrl = href.startsWith('http') ? href : new URL(href, url).href;
-            
-            // Only include links from the same domain
-            if (new URL(fullUrl).origin === baseUrl) {
-              links.push({
-                url: fullUrl,
-                title: text,
-                selector: selector
-              });
-            }
-          }
-        });
+          if (!href || href === '#') return;
 
-        if (links.length > 0) break; // Use first successful selector
+          const full = href.startsWith('http') ? href : new URL(href, url).href;
+          if (new URL(full).origin !== base) return;
+
+          links.push({ url: full, title: text || '(untitled)' });
+        });
+        if (links.length) break; // stop on first selector that worked
       }
 
-      // Remove duplicates
-      const uniqueLinks = links.filter((link, index, self) => 
-        index === self.findIndex(l => l.url === link.url)
-      );
+      links = [...new Map(links.map(l => [l.url, l])).values()]; // dedupe
 
       return {
-        baseUrl,
-        totalLinks: uniqueLinks.length,
-        links: uniqueLinks.slice(0, 50), // Limit to 50 pages
-        detectedSelector: links.length > 0 ? links[0].selector : null
+        baseUrl  : base,
+        totalLinks: links.length,
+        links    : links.slice(0, 50) // cap for sanity
       };
-
-    } catch (error) {
-      // Enhanced error handling for better user experience
-      let userFriendlyMessage = 'Failed to analyze documentation';
-
-      if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
-        userFriendlyMessage = 'The URL could not be reached. Please check if the URL is correct and the website is accessible.';
-      } else if (error.code === 'ETIMEDOUT') {
-        userFriendlyMessage = 'The request timed out. The website might be slow to respond or temporarily unavailable.';
-      } else if (error.response) {
-        // HTTP error responses
-        const status = error.response.status;
-        if (status === 404) {
-          userFriendlyMessage = 'The page was not found (404). Please check if the URL is correct.';
-        } else if (status === 403) {
-          userFriendlyMessage = 'Access to this page is forbidden (403). The website might be blocking automated requests.';
-        } else if (status === 500) {
-          userFriendlyMessage = 'The website is experiencing server issues (500). Please try again later.';
-        } else if (status >= 400 && status < 500) {
-          userFriendlyMessage = `The page returned an error (${status}). Please check if the URL is correct.`;
-        } else if (status >= 500) {
-          userFriendlyMessage = `The website is experiencing server issues (${status}). Please try again later.`;
-        }
-      } else if (error.message.includes('530') || error.message.includes('Unknown status code')) {
-        userFriendlyMessage = 'The URL appears to be invalid or the website is not accessible. Please check the URL and try again.';
-      } else if (error.message.includes('Invalid URL')) {
-        userFriendlyMessage = 'The provided URL is not valid. Please enter a complete URL starting with http:// or https://';
-      }
-
-      throw new Error(userFriendlyMessage);
+    } catch (err) {
+      throw new Error(`Failed to analyse documentation: ${err.message}`);
+    } finally {
+      if (page) await page.close().catch(() => {});
     }
   }
 
-  async startScraping(baseUrl, links, sessionId = uuidv4()) {
+  /** Kick off a background scraping job */
+  startScraping(baseUrl, links, sessionId = uuidv4()) {
     const session = {
-      id: sessionId,
-      status: 'running',
-      progress: 0,
-      total: links.length,
+      id       : sessionId,
+      status   : 'running',
+      progress : 0,
+      total    : links.length,
       completed: 0,
-      failed: 0,
-      pdfs: [],
-      startTime: new Date(),
-      errors: []
+      failed   : 0,
+      pdfs     : [],
+      errors   : [],
+      startTime: new Date()
     };
-
     this.sessions.set(sessionId, session);
-
-    // Start scraping in background
-    this.performScraping(session, baseUrl, links).catch(error => {
-      console.error('Scraping failed:', error);
-      session.status = 'failed';
-      session.error = error.message;
-    });
-
+    this._scrapeLoop(session, baseUrl, links)
+        .catch(err => { session.status = 'failed'; session.error = err.message; });
     return sessionId;
   }
 
-  async performScraping(session, baseUrl, links) {
-    const browser = await this.initBrowser();
-    
+  getProgress(id)          { return this.sessions.get(id); }
+  async closeBrowser()      { if (this.browser?.isConnected()) await this.browser.close(); }
+  async generateZip(id)     { return this._zipSession(id); }
+
+  /* --------------------------------------------------  PRIVATE  */
+
+  /* ----------  Browser bootstrap with multi-step fallback  ---------- */
+  async _getBrowser() {
+    if (this.browser && this.browser.isConnected()) return this.browser;
+    if (this.browserLaunchPromise)                   return this.browserLaunchPromise;
+
+    this.browserLaunchPromise = this._launchBrowser();
     try {
-      for (let i = 0; i < links.length; i++) {
-        const link = links[i];
-        
-        try {
-          const page = await browser.newPage();
-          await page.setViewport({ width: 1200, height: 800 });
-          
-          // Navigate to page
-          await page.goto(link.url, { 
-            waitUntil: 'networkidle2',
-            timeout: 30000 
-          });
+      this.browser = await this.browserLaunchPromise;
+      return this.browser;
+    } finally {
+      this.browserLaunchPromise = null;
+    }
+  }
 
-          // Wait for content to load
-          await page.waitForTimeout(2000);
+  async _launchBrowser() {
+    // 1. Ensure there is a Chrome/Chromium binary we can use
+    const localChromePath =
+      process.env.PUPPETEER_EXECUTABLE_PATH ||
+      process.env.CHROME_EXECUTABLE_PATH   ||
+      guessChromeExecutable();
 
-          // Remove navigation and other elements
-          await page.evaluate(() => {
-            const selectors = [
-              'nav', '.nav', '.navigation', '.sidebar', 
-              'header', '.header', 'footer', '.footer',
-              '.menu', '.breadcrumb', '.toc-container'
-            ];
-            
-            selectors.forEach(sel => {
-              document.querySelectorAll(sel).forEach(el => el.remove());
-            });
-          });
+    const commonArgs = [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--disable-gpu',
+      '--window-size=1920,1080'
+    ];
 
-          // Generate PDF
-          const pdfBuffer = await page.pdf({
-            format: 'A4',
-            printBackground: true,
-            margin: {
-              top: '1in',
-              right: '1in',
-              bottom: '1in',
-              left: '1in'
-            }
-          });
-
-          // Save PDF
-          const filename = `${this.sanitizeFilename(link.title || `page-${i + 1}`)}.pdf`;
-          const filepath = join(process.cwd(), 'temp', session.id, filename);
-          
-          await fs.mkdir(join(process.cwd(), 'temp', session.id), { recursive: true });
-          await fs.writeFile(filepath, pdfBuffer);
-
-          session.pdfs.push({
-            title: link.title,
-            filename,
-            filepath,
-            url: link.url
-          });
-
-          await page.close();
-          session.completed++;
-
-        } catch (error) {
-          console.error(`Failed to scrape ${link.url}:`, error);
-          session.failed++;
-          session.errors.push({
-            url: link.url,
-            error: error.message
-          });
-        }
-
-        session.progress = Math.round((session.completed + session.failed) / session.total * 100);
+    /* -----  First attempt: “safe” flags only  ----- */
+    try {
+      return await puppeteer.launch({
+        headless : true,
+        executablePath: localChromePath,
+        args     : commonArgs,
+        timeout  : 60_000,
+        defaultViewport: null,
+        handleSIGHUP: false,
+        handleSIGINT: false,
+        handleSIGTERM: false
+      });
+    } catch (safeErr) {
+      console.warn('[Puppeteer] Safe launch failed, retrying with stealth flags…');
+      /* -----  Second attempt: full stealth (can crash on some macOS builds)  ----- */
+      try {
+        return await puppeteer.launch({
+          headless : 'new',
+          executablePath: localChromePath,
+          args: [
+            ...commonArgs,
+            '--disable-blink-features=AutomationControlled',
+            '--disable-features=IsolateOrigins,site-per-process',
+            '--disable-web-security'
+          ],
+          timeout: 60_000,
+          defaultViewport: null,
+          ignoreDefaultArgs: ['--enable-automation'],
+          handleSIGHUP: false,
+          handleSIGINT: false,
+          handleSIGTERM: false
+        });
+      } catch (stealthErr) {
+        console.error('────────────────────────────────────────────────────────');
+        console.error('🚨  Puppeteer could NOT launch Chrome.');
+        console.error('     Safe launch error   :', safeErr.message);
+        console.error('     Stealth launch error:', stealthErr.message);
+        console.error('────────────────────────────────────────────────────────');
+        throw new Error(
+          'Chrome failed to start. ' +
+          'Make sure a recent Chrome/Chromium is installed or set CHROME_EXECUTABLE_PATH.'
+        );
       }
-
-      session.status = 'completed';
-      session.endTime = new Date();
-
-    } catch (error) {
-      session.status = 'failed';
-      session.error = error.message;
-      throw error;
     }
   }
 
-  getProgress(sessionId) {
-    return this.sessions.get(sessionId);
+  /* ----------  Scraping loop → PDF per page  ---------- */
+  async _scrapeLoop(session, baseUrl, links) {
+    const browser = await this._getBrowser();
+    for (const [idx, link] of links.entries()) {
+      let page;
+      try {
+        page = await browser.newPage();
+        await page.setUserAgent(
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ' +
+          'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123 Safari/537.36'
+        );
+
+        await page.goto(link.url, { waitUntil: 'networkidle2', timeout: 45_000 });
+        await page.evaluate(() => {
+          // Strip nav/footers for cleaner PDF
+          ['nav','header','footer','.sidebar','.toc','.breadcrumb']
+            .forEach(sel => document.querySelectorAll(sel).forEach(e => e.remove()));
+        });
+
+        const pdfBuffer = await page.pdf({
+          printBackground: true,
+          format: 'A4',
+          margin: { top: '1in', right: '1in', bottom: '1in', left: '1in' }
+        });
+
+        const dir  = join(process.cwd(), 'temp', session.id);
+        await fs.mkdir(dir, { recursive: true });
+        const fname = this._slugify(link.title || `page-${idx+1}`) + '.pdf';
+        const path  = join(dir, fname);
+        await fs.writeFile(path, pdfBuffer);
+
+        session.pdfs.push({ title: link.title, filename: fname, filepath: path });
+        session.completed++;
+      } catch (err) {
+        session.failed++;
+        session.errors.push({ url: link.url, error: err.message });
+      } finally {
+        session.progress = Math.round(
+          (session.completed + session.failed) / session.total * 100
+        );
+        if (page) await page.close().catch(() => {});
+      }
+    }
+    session.status  = 'completed';
+    session.endTime = new Date();
   }
 
-  async generateZip(sessionId) {
-    const session = this.sessions.get(sessionId);
-    if (!session) {
-      throw new Error('Session not found');
-    }
+  /* ----------  Zip helper  ---------- */
+  _zipSession(id) {
+    const session = this.sessions.get(id);
+    if (!session) throw new Error('Session not found');
 
     return new Promise((resolve, reject) => {
       const archive = archiver('zip', { zlib: { level: 9 } });
-      const buffers = [];
-
-      archive.on('data', (data) => buffers.push(data));
-      archive.on('end', () => resolve(Buffer.concat(buffers)));
+      const chunks  = [];
+      archive.on('data',  d => chunks.push(d));
+      archive.on('end',   () => resolve(Buffer.concat(chunks)));
       archive.on('error', reject);
 
-      // Add PDFs to archive
-      session.pdfs.forEach(pdf => {
-        archive.file(pdf.filepath, { name: pdf.filename });
-      });
-
+      session.pdfs.forEach(pdf => archive.file(pdf.filepath, { name: pdf.filename }));
       archive.finalize();
     });
   }
 
-  sanitizeFilename(filename) {
-    return filename
+  /* ----------  Utils  ---------- */
+  _slugify(str) {
+    return str
+      .normalize('NFKD')
       .replace(/[^\w\s-]/g, '')
+      .trim()
       .replace(/\s+/g, '-')
       .toLowerCase()
       .substring(0, 50);
   }
 }
 
-export default ScraperService;
+/* ****************************************************
+ * Helper: guessChromeExecutable() — returns a path or null
+ **************************************************** */
+function guessChromeExecutable() {
+  const macPaths = [
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Chromium.app/Contents/MacOS/Chromium'
+  ];
+  const linuxPaths = [
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/chromium'
+  ];
+  const winPaths = [
+    `${process.env['PROGRAMFILES']}\\Google\\Chrome\\Application\\chrome.exe`,
+    `${process.env['PROGRAMFILES(X86)']}\\Google\\Chrome\\Application\\chrome.exe`
+  ];
+
+  const candidates = process.platform === 'darwin' ? macPaths
+                   : process.platform === 'win32'  ? winPaths
+                   : linuxPaths;
+
+  for (const p of candidates) if (existsSync(p)) return p;
+  return null; // Puppeteer will fall back to its own download (if present)
+}

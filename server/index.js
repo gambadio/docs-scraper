@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import scraperRoutes from './routes/scraper.js';
+import scraperRoutes, { scraperService } from './routes/scraper.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -23,6 +23,23 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
+});
+
+const gracefulShutdown = async (signal) => {
+  console.log(`\n${signal} received. Closing server...`);
+  server.close(async () => {
+    console.log('HTTP server closed.');
+    await scraperService.closeBrowser();
+    console.log('Browser closed.');
+    process.exit(0);
+  });
+};
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('exit', async () => {
+  console.log('Server shutting down.');
+  await scraperService.closeBrowser();
 });
