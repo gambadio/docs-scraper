@@ -1,97 +1,77 @@
-/**********************************************************************
- * ScraperService — robust Puppeteer scraper with AI fallback
- *********************************************************************/
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { load } from 'cheerio';
 import fs from 'fs/promises';
-import { existsSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { createWriteStream } from 'fs';
+import { join } from 'path';
 import archiver from 'archiver';
 import { v4 as uuidv4 } from 'uuid';
-import SelectorAI from './SelectorAI.js';
+import { SelectorAI } from './SelectorAI.js';
 import { execSync } from 'child_process';
 
 puppeteer.use(StealthPlugin());
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname  = dirname(__filename);
+class ScraperService {
+  sessions;
+  browser;
+  browserLaunchPromise;
+  ai;
 
-export default class ScraperService {
   constructor() {
-    this.sessions             = new Map();
-    this.browser              = null;
+    this.sessions = new Map();
+    this.browser = null;
     this.browserLaunchPromise = null;
-    this.ai                   = new SelectorAI();
+    this.ai = new SelectorAI();
   }
 
-  /* =============================  PUBLIC  ============================= */
-
-  /** Analyse docs page and discover navigation links */
-  async analyzeDocumentation(url) {
-    let browser;
+  async analyzeDocumentation(url, forceAi = false) {
+    console.log('Analyzing:', url, 'Force AI:', forceAi);
     let page;
-
     try {
-      browser = await this._getBrowser();
+      const browser = await this._getBrowser();
       page = await browser.newPage();
       
-      // Configure page
       await page.setViewport({ width: 1600, height: 1200 });
       await page.setUserAgent(
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ' +
-        'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123 Safari/537.36'
+        'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
       );
       
-      // Enable request interception to handle errors
       await page.setRequestInterception(true);
-      page.on('request', (request) => {
-        request.continue();
-      });
+      page.on('request', (request) => request.continue());
       
       console.log('Navigating to:', url);
-      
-      // Use domcontentloaded to avoid frame detachment issues
-      await page.goto(url, { 
-        waitUntil: 'domcontentloaded', 
-        timeout: 45_000 
-      });
-      
-      // Wait a bit for dynamic content to load
-      await page.waitForTimeout(2000);
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+      await new Promise(resolve => setTimeout(resolve, 2000));
 
       const html = await page.content();
-      const $    = load(html);
+      const $ = load(html);
       const base = new URL(url).origin;
 
-      /* ----------  pass 1: heuristic CSS selectors  ---------- */
       const SELS = [
-        'nav a[href]',
-        '.sidebar a[href]',
-        '.docs-sidebar a[href]',
-        '[role="navigation"] a[href]',
-        'aside a[href]',
-        '.toc a[href]',
-        '.menu a[href]'
+        'nav a[href]', '.sidebar a[href]', '.docs-sidebar a[href]',
+        '[role="navigation"] a[href]', 'aside a[href]', '.toc a[href]', '.menu a[href]',
+        '.side-nav-item', '.scroll-link', 'a.side-nav-item', 'a.scroll-link',
+        '.side-nav-section a[href]', '[class*="nav"] a[href]', '[class*="sidebar"] a[href]'
       ];
 
       let links = [];
-      for (const sel of SELS) {
-        $(sel).each((_, el) => {
-          const href = $(el).attr('href');
-          if (!href || href === '#') return;
-          const abs = href.startsWith('http') ? href : new URL(href, url).href;
-          if (new URL(abs).origin !== base) return;
-          links.push({ url: abs, title: $(el).text().trim() || '(untitled)' });
-        });
-        if (links.length) break;
+      
+      // Use AI if forced or skip regular selectors
+      if (!forceAi) {
+        for (const sel of SELS) {
+          $(sel).each((_, el) => {
+            const href = $(el).attr('href');
+            if (!href || href === '#') return;
+            const abs = href.startsWith('http') ? href : new URL(href, url).href;
+            if (new URL(abs).origin !== base) return;
+            links.push({ url: abs, title: $(el).text().trim() || '(untitled)' });
+          });
+        }
       }
 
-      /* ----------  pass 2: LLM fallback  ---------- */
-      if (links.length === 0) {
+      if (links.length === 0 || forceAi) {
         const result = await this.ai.extractNav(html, url);
-
         if (result.type === 'selector') {
           $(result.value).each((_, el) => {
             const href = $(el).attr('href');
@@ -100,302 +80,181 @@ export default class ScraperService {
             if (new URL(abs).origin !== base) return;
             links.push({ url: abs, title: $(el).text().trim() || '(untitled)' });
           });
-        } else if (result.type === 'links') {
-          links = result.value.filter(l => l.url && l.url.startsWith('http'));
+        } else if (result.type === 'links' && Array.isArray(result.value)) {
+          for (const link of result.value) {
+            if (!link.url || link.url === '#') continue;
+            const abs = link.url.startsWith('http') ? link.url : new URL(link.url, url).href;
+            if (new URL(abs).origin !== base) continue;
+            links.push({ url: abs, title: link.title || '(untitled)' });
+          }
         }
       }
 
-      links = [...new Map(links.map(l => [l.url, l])).values()].slice(0, 100);
+      const seen = new Set();
+      const clean = links.filter(({ url }) => {
+        if (seen.has(url)) return false;
+        seen.add(url);
+        return true;
+      });
 
-      return { baseUrl: base, totalLinks: links.length, links };
-    } catch (err) {
-      console.error('Analysis error details:', err);
-      // Try to recover by relaunching browser
-      if (err.message.includes('socket hang up') || err.message.includes('Protocol error')) {
-        this.browser = null;
-        this.browserLaunchPromise = null;
-      }
-      throw new Error(`Failed to analyze URL: ${err.message}`);
+      return { 
+        baseUrl: url, 
+        links: clean.slice(0, 50), 
+        total: clean.length,
+        aiAvailable: clean.length === 0 || clean.length < 5
+      };
+    } catch (error) {
+      console.error('Analysis error:', error);
+      throw new Error(`Failed to analyze documentation: ${error.message}`);
     } finally {
-      if (page) {
-        await page.close().catch((err) => {
-          console.error('Error closing page:', err);
-        });
+      if (page && !page.isClosed()) {
+        await page.close().catch(() => {});
       }
     }
   }
 
-  /** Kick-off scraping job */
-  startScraping(baseUrl, urls, sessionId = uuidv4()) {
+  async startScraping(baseUrl, urls, sessionId) {
     const session = {
-      id       : sessionId,
-      status   : 'running',
-      total    : urls.length,
-      progress : 0,
-      completed: 0,
-      failed   : 0,
-      pdfs     : [],
-      errors   : [],
-      startTime: new Date()
+      urls,
+      progress: {
+        current: 0, total: urls.length, completed: 0, failed: 0,
+        status: 'in_progress', errors: []
+      }
     };
     this.sessions.set(sessionId, session);
-    this._scrapeLoop(session, urls).catch(err => {
-      session.status = 'failed'; session.error = err.message;
+    this._processScraping(sessionId, baseUrl, urls).catch(error => {
+      console.error('Fatal scraping error:', error);
+      session.progress.status = 'failed';
     });
-    return sessionId;
   }
 
-  getProgress(id)          { return this.sessions.get(id); }
-  async closeBrowser() {
-    if (this.browser?.isConnected()) {
+  getProgress(sessionId) {
+    return this.sessions.get(sessionId)?.progress || null;
+  }
+
+  async generateZip(sessionId) {
+    const session = this.sessions.get(sessionId);
+    if (!session || !session.pdfPath) {
+      throw new Error('Session not found or PDFs not ready');
+    }
+    const pdfFiles = await fs.readdir(session.pdfPath);
+    const zipPath = join(session.pdfPath, 'documentation.zip');
+    return new Promise((resolve, reject) => {
+      const output = createWriteStream(zipPath);
+      const archive = archiver('zip', { zlib: { level: 9 } });
+      output.on('close', async () => {
+        try {
+          resolve(await fs.readFile(zipPath));
+        } catch (error) {
+          reject(error);
+        }
+      });
+      archive.on('error', reject);
+      archive.pipe(output);
+      for (const file of pdfFiles) {
+        if (file.endsWith('.pdf')) {
+          archive.file(join(session.pdfPath, file), { name: file });
+        }
+      }
+      archive.finalize();
+    });
+  }
+
+  async _processScraping(sessionId, baseUrl, urls) {
+    const session = this.sessions.get(sessionId);
+    const tempDir = join(process.cwd(), 'temp', sessionId);
+    await fs.mkdir(tempDir, { recursive: true });
+    session.pdfPath = tempDir;
+    for (let i = 0; i < urls.length; i++) {
+      session.progress.current = i + 1;
+      try {
+        await this._scrapePage(urls[i], tempDir, i);
+        session.progress.completed++;
+      } catch (error) {
+        console.error(`Failed to scrape ${urls[i]}:`, error.message);
+        session.progress.failed++;
+        session.progress.errors.push({ url: urls[i], error: error.message });
+      }
+    }
+    session.progress.status = session.progress.failed === urls.length ? 'failed' : 'completed';
+  }
+
+  async _scrapePage(url, outputDir, index) {
+    let page;
+    try {
+      const browser = await this._getBrowser();
+      page = await browser.newPage();
+      await page.setViewport({ width: 1280, height: 1024 });
+      await page.goto(url, { waitUntil: 'networkidle0', timeout: 60_000 });
+      await page.evaluate(() => {
+        const toRemove = document.querySelectorAll('nav, header, footer, .sidebar, .navigation, .menu');
+        toRemove.forEach(el => el.remove());
+      });
+      const title = await page.title();
+      const filename = `${String(index + 1).padStart(3, '0')}-${this._sanitizeFilename(title)}.pdf`;
+      const filepath = join(outputDir, filename);
+      await page.pdf({
+        path: filepath, format: 'A4', printBackground: true,
+        margin: { top: '1cm', right: '1cm', bottom: '1cm', left: '1cm' }
+      });
+      console.log(`✓ Scraped: ${title}`);
+    } catch (error) {
+      throw error;
+    } finally {
+      if (page && !page.isClosed()) {
+        await page.close().catch(() => {});
+      }
+    }
+  }
+
+  async _getBrowser() {
+    if (!this.browserLaunchPromise) {
+      this.browserLaunchPromise = this._launchBrowser();
+    }
+    return this.browserLaunchPromise;
+  }
+
+  async _launchBrowser() {
+    try {
+      const puppeteerExecutablePath = execSync('npx puppeteer browsers where chrome', { encoding: 'utf8' }).trim();
+      const browser = await puppeteer.launch({
+        headless: true,
+        executablePath: puppeteerExecutablePath || undefined,
+        args: [
+          '--no-sandbox', '--disable-setuid-sandbox',
+          '--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage'
+        ]
+      });
+      this.browser = browser;
+      process.once('SIGINT', () => this._cleanup());
+      process.once('SIGTERM', () => this._cleanup());
+      return browser;
+    } catch (error) {
+      console.error('Failed to launch browser:', error);
+      throw new Error(`Browser launch failed: ${error.message}`);
+    }
+  }
+
+  async _cleanup() {
+    if (this.browser) {
       await this.browser.close();
       this.browser = null;
       this.browserLaunchPromise = null;
     }
   }
-  async generateZip(id)     { return this._zipSession(id); }
 
-  /* =======================  INTERNAL HELPERS  ======================== */
-
-  async _getBrowser() {
-    // Check if browser is still connected
-    if (this.browser?.isConnected()) return this.browser;
-    
-    // If already launching, wait for it
-    if (this.browserLaunchPromise) return this.browserLaunchPromise;
-
-    const launch = async () => {
-      try {
-        // Close any existing browser instance
-        if (this.browser) {
-          await this.browser.close().catch(() => {});
-          this.browser = null;
-        }
-
-        const chromePath = await this._findChrome();
-        const args = [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--disable-web-security',
-          '--disable-features=IsolateOrigins,site-per-process',
-          '--window-size=1920,1080',
-          '--disable-accelerated-2d-canvas',
-          '--single-process', // Help with resource constraints
-          '--no-zygote' // Disable zygote process (Linux)
-        ];
-        
-        console.log('Launching browser with executable:', chromePath || 'Puppeteer default');
-        
-        const launchOptions = {
-          headless: 'new',
-          args,
-          defaultViewport: null,
-          timeout: 60_000,
-          handleSIGHUP: false,
-          handleSIGINT: false,
-          handleSIGTERM: false,
-          protocolTimeout: 180_000,
-          dumpio: false
-        };
-
-        // Only set executablePath if we found Chrome
-        if (chromePath) {
-          launchOptions.executablePath = chromePath;
-        }
-
-        const browser = await puppeteer.launch(launchOptions);
-        
-        // Set up disconnect handler
-        browser.on('disconnected', () => {
-          console.log('Browser disconnected');
-          this.browser = null;
-        });
-        
-        console.log('Browser launched successfully');
-        return browser;
-      } catch (err) {
-        console.error('Failed to launch browser:', err.message);
-        
-        // Provide helpful error messages
-        if (err.message.includes('Failed to launch the browser process')) {
-          console.error('\n❌ Chrome/Chromium executable not found or failed to start.');
-          console.error('Try one of the following solutions:\n');
-          console.error('1. Install Google Chrome: https://www.google.com/chrome/');
-          console.error('2. Set CHROME_EXECUTABLE_PATH environment variable to your Chrome path');
-          console.error('3. Run: npm install puppeteer --save (to download Chromium automatically)');
-          console.error('4. On Linux, install dependencies: sudo apt-get install chromium-browser');
-          console.error('5. On macOS with Homebrew: brew install --cask google-chrome\n');
-        }
-        
-        this.browserLaunchPromise = null;
-        throw err;
-      }
-    };
-
-    this.browserLaunchPromise = launch();
-    this.browser = await this.browserLaunchPromise;
-    this.browserLaunchPromise = null;
-    return this.browser;
+  _sanitizeFilename(name) {
+    return name
+      .replace(/[<>:"/\\|?*]/g, '')
+      .replace(/\s+/g, '-')
+      .toLowerCase()
+      .substring(0, 50);
   }
 
-  async _findChrome() {
-    // First check environment variable
-    if (process.env.CHROME_EXECUTABLE_PATH && existsSync(process.env.CHROME_EXECUTABLE_PATH)) {
-      console.log('Using Chrome from CHROME_EXECUTABLE_PATH:', process.env.CHROME_EXECUTABLE_PATH);
-      return process.env.CHROME_EXECUTABLE_PATH;
-    }
-
-    // Platform-specific paths
-    const platform = process.platform;
-    let candidates = [];
-
-    if (platform === 'darwin') {
-      // macOS
-      candidates = [
-        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-        '/Applications/Chromium.app/Contents/MacOS/Chromium',
-        '/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary',
-        '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
-        '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
-        process.env.HOME + '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-      ];
-
-      // Try to find Chrome using mdfind (Spotlight)
-      try {
-        const result = execSync('mdfind "kMDItemCFBundleIdentifier == \'com.google.Chrome\'"', { encoding: 'utf8' }).trim();
-        if (result) {
-          candidates.unshift(result.split('\n')[0] + '/Contents/MacOS/Google Chrome');
-        }
-      } catch (e) {
-        // mdfind failed, continue with hardcoded paths
-      }
-    } else if (platform === 'win32') {
-      // Windows
-      const programFiles = [
-        process.env['PROGRAMFILES'],
-        process.env['PROGRAMFILES(X86)'],
-        process.env['LOCALAPPDATA']
-      ].filter(Boolean);
-
-      for (const base of programFiles) {
-        candidates.push(
-          `${base}\\Google\\Chrome\\Application\\chrome.exe`,
-          `${base}\\Google\\Chrome Beta\\Application\\chrome.exe`,
-          `${base}\\Google\\Chrome Dev\\Application\\chrome.exe`,
-          `${base}\\Google\\Chrome SxS\\Application\\chrome.exe`,
-          `${base}\\Chromium\\Application\\chrome.exe`,
-          `${base}\\Microsoft\\Edge\\Application\\msedge.exe`,
-          `${base}\\BraveSoftware\\Brave-Browser\\Application\\brave.exe`
-        );
-      }
-    } else {
-      // Linux
-      candidates = [
-        '/usr/bin/google-chrome',
-        '/usr/bin/google-chrome-stable',
-        '/usr/bin/google-chrome-beta',
-        '/usr/bin/google-chrome-dev',
-        '/usr/bin/chromium-browser',
-        '/usr/bin/chromium',
-        '/usr/bin/brave-browser',
-        '/usr/bin/microsoft-edge',
-        '/snap/bin/chromium',
-        '/usr/local/bin/google-chrome',
-        '/opt/google/chrome/google-chrome',
-        '/opt/google/chrome/chrome',
-      ];
-
-      // Try which command
-      try {
-        const whichResult = execSync('which google-chrome chromium chromium-browser 2>/dev/null', { encoding: 'utf8' }).trim();
-        if (whichResult) {
-          candidates.unshift(...whichResult.split('\n').filter(Boolean));
-        }
-      } catch (e) {
-        // which failed, continue with hardcoded paths
-      }
-    }
-
-    // Check puppeteer's bundled chromium
-    try {
-      const puppeteerChromium = execSync('node -e "console.log(require(\'puppeteer\').executablePath())"', { encoding: 'utf8' }).trim();
-      if (puppeteerChromium && existsSync(puppeteerChromium)) {
-        console.log('Found Puppeteer\'s bundled Chromium:', puppeteerChromium);
-        return puppeteerChromium;
-      }
-    } catch (e) {
-      console.log('Puppeteer bundled Chromium not found');
-    }
-
-    // Find first existing path
-    for (const path of candidates) {
-      if (path && existsSync(path)) {
-        console.log('Found Chrome at:', path);
-        return path;
-      }
-    }
-
-    console.log('No Chrome executable found in common locations');
-    console.log('Falling back to Puppeteer default (will download if needed)');
-    return undefined; // Let Puppeteer handle it
+  _filenameToIndex(filename) {
+    const match = filename.match(/^(\d+)-/);
+    return match ? parseInt(match[1], 10) : 999;
   }
-
-  async _scrapeLoop(session, urls) {
-    const browser = await this._getBrowser();
-
-    for (const [idx, url] of urls.entries()) {
-      let page;
-      try {
-        page = await browser.newPage();
-        await page.setUserAgent(
-          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ' +
-          'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123 Safari/537.36'
-        );
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 45_000 });
-        await page.evaluate(() => {
-          ['nav','header','footer','.sidebar','.toc','.breadcrumb']
-            .forEach(sel => document.querySelectorAll(sel).forEach(e => e.remove()));
-        });
-
-        const pdfBuffer = await page.pdf({
-          format:'A4', printBackground:true,
-          margin:{ top:'1in', right:'1in', bottom:'1in', left:'1in' }
-        });
-
-        const dir  = join(process.cwd(), 'temp', session.id);
-        await fs.mkdir(dir, { recursive:true });
-        const name = this._slugify(`page-${idx+1}`) + '.pdf';
-        await fs.writeFile(join(dir, name), pdfBuffer);
-        session.pdfs.push({ url, filename:name, filepath:join(dir,name) });
-        session.completed++;
-      } catch (err) {
-        session.failed++; session.errors.push({ url, error: err.message });
-      } finally {
-        session.progress = Math.round(
-          (session.completed+session.failed)/session.total*100
-        );
-        if (page) await page.close().catch(() => {});
-      }
-    }
-    session.status  = 'completed';
-    session.endTime = new Date();
-  }
-
-  _zipSession(id) {
-    const s = this.sessions.get(id);
-    if (!s) throw new Error('Session not found');
-    return new Promise((res, rej) => {
-      const arch = archiver('zip', { zlib:{level:9} });
-      const buf  = [];
-      arch.on('data', d => buf.push(d));
-      arch.on('end', () => res(Buffer.concat(buf)));
-      arch.on('error', rej);
-      s.pdfs.forEach(p => arch.file(p.filepath, { name: p.filename }));
-      arch.finalize();
-    });
-  }
-
-  _slugify(str) { return str.replace(/[^\w\s-]/g,'').trim().replace(/\s+/g,'-').toLowerCase(); }
 }
+
+export default ScraperService;

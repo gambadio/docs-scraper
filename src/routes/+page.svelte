@@ -23,6 +23,27 @@
     }
   }
 
+  async function handleAiAnalysis() {
+    if (!$appState.analysis) return;
+    try {
+      const response = await fetch('/api/scraper/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          url: $appState.analysis.baseUrl,
+          forceAi: true 
+        })
+      });
+      
+      if (!response.ok) throw new Error('Failed to analyze URL with AI');
+      
+      const analysis = await response.json();
+      appState.setAnalysis(analysis);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
   async function handleStartScraping(event: CustomEvent) {
     if (!$appState.analysis) return;
     try {
@@ -82,6 +103,7 @@
       analysis={$appState.analysis}
       on:startScraping={handleStartScraping}
       on:reset={handleReset}
+      on:aiAnalysis={handleAiAnalysis}
     />
   {:else if $appState.step === 'scraping'}
     <ScrapingProgress

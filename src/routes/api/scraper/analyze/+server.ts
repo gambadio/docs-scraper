@@ -1,19 +1,28 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { scraperService } from '$lib/server/services/scraperInstance';
 
 export const POST: RequestHandler = async ({ request }) => {
   try {
-    const { url } = await request.json();
+    const body = await request.json();
     
-    if (!url) {
-      return json({ error: 'URL is required' }, { status: 400 });
-    }
+    // Proxy the request to the backend Express server
+    const response = await fetch('http://localhost:3001/api/scraper/analyze', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
 
-    const analysis = await scraperService.analyzeDocumentation(url);
-    return json(analysis);
+    const data = await response.json();
+    
+    if (!response.ok) {
+      return json(data, { status: response.status });
+    }
+    
+    return json(data);
   } catch (error: any) {
-    console.error('Analysis error:', error);
-    return json({ error: error.message }, { status: 500 });
+    console.error('Analysis proxy error:', error);
+    return json({ error: 'Failed to connect to backend server' }, { status: 500 });
   }
 };

@@ -7,13 +7,13 @@ const scraperService = new ScraperService();
 // Analyze URL and discover navigation links
 router.post('/analyze', async (req, res) => {
   try {
-    const { url } = req.body;
+    const { url, forceAi } = req.body;
     
     if (!url) {
       return res.status(400).json({ error: 'URL is required' });
     }
 
-    const analysis = await scraperService.analyzeDocumentation(url);
+    const analysis = await scraperService.analyzeDocumentation(url, forceAi);
     res.json(analysis);
   } catch (error) {
     console.error('Analysis error:', error);

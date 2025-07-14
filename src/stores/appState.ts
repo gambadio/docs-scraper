@@ -8,8 +8,7 @@ export interface Link {
 export interface Analysis {
   baseUrl: string;
   links: Link[];
-  aiAvailable?: boolean;
-  total?: number;
+  screenshot: string;
 }
 
 export interface Progress {

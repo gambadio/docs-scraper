@@ -32,10 +32,6 @@
   function deselectAll() {
     selectedLinks = [];
   }
-
-  function triggerAiAnalysis() {
-    dispatch('aiAnalysis');
-  }
 </script>
 
 {#if analysis}
@@ -55,15 +51,6 @@
           <span class="label">things you want</span>
         </div>
       </div>
-
-      {#if analysis.aiAvailable && analysis.links.length < 10}
-      <div class="ai-notice">
-        <p>Found only {analysis.links.length} links. Want me to look harder with AI?</p>
-        <button class="ai-btn" on:click={triggerAiAnalysis}>
-          Use AI Analysis
-        </button>
-      </div>
-      {/if}
   
       <button class="start-btn secondary" on:click={startScraping} disabled={selectedLinks.length === 0}>
         Let's get scraping! ({selectedLinks.length})
@@ -299,34 +286,5 @@
     align-items: center;
     border: 4px solid var(--bauhaus-black);
     flex-shrink: 0;
-  }
-
-  .ai-notice {
-    background-color: var(--bauhaus-light-gray);
-    border: 4px solid var(--bauhaus-black);
-    border-radius: 8px;
-    padding: 1.5rem;
-    margin-top: 2rem;
-    text-align: center;
-  }
-  .ai-notice p {
-    margin: 0 0 1rem 0;
-    font-size: 1.1rem;
-  }
-  .ai-btn {
-    background-color: var(--bauhaus-blue);
-    color: var(--text-light);
-    padding: 0.8rem 2rem;
-    font-size: 1.1rem;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: transform 0.1s;
-  }
-  .ai-btn:hover {
-    transform: translateY(-2px);
-  }
-  .ai-btn:active {
-    transform: translateY(0);
   }
 </style>

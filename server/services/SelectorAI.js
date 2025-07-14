@@ -2,12 +2,15 @@
  * SelectorAI — obtains sidebar selectors or direct link arrays from an LLM.
  * Uses OpenRouter (https://openrouter.ai) with GPT-4.1-mini.
  */
-import axios from 'axios';
+
+import fetch from 'node-fetch';
 
 const ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 const MODEL    = 'openai/gpt-4.1-mini';
 
-export default class SelectorAI {
+class SelectorAI {
+  apiKey;
+
   constructor() {
     this.apiKey = process.env.OPENROUTER_API_KEY;
     if (!this.apiKey) {
@@ -17,9 +20,9 @@ export default class SelectorAI {
 
   /**
    * Ask the LLM for a CSS selector or a direct link list.
-   * @param {string} html  – full HTML of the docs landing page
-   * @param {string} url   – absolute URL of that page (for context)
-   * @returns {{type:'selector', value:string}|{type:'links', value:Array<{url,title}>}}
+   * @param {string} html – full HTML of the docs landing page
+   * @param {string} url – absolute URL of that page (for context)
+   * @returns {Promise<ExtractionResult>} CSS selector or array of links
    */
   async extractNav(html, url) {
     // Keep token-count low: truncate after 30 000 chars
@@ -42,34 +45,41 @@ Rules:
 • Limit to max 100 links.
 `;
 
-    const { data } = await axios.post(
-      ENDPOINT,
-      {
+    const response = await fetch(ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`,
+        'X-Title': 'Docs Scraper AI'
+      },
+      body: JSON.stringify({
         model: MODEL,
         messages: [
           { role: 'system', content: sys.trim() },
-          { role: 'user',   content: user.trim() },
-          { role: 'user',   content: snippet }
+          { role: 'user', content: user.trim() + '\n\n' + snippet }
         ],
         temperature: 0.2,
-        response_format: { type: 'json_object' }
-      },
-      {
-        headers: {
-          Authorization : `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
-          // optional vanity headers → ranking on openrouter.ai
-          'HTTP-Referer': 'https://github.com/ricardo-kupper/docs-scraper',
-          'X-Title'     : 'Docs Scraper'
-        },
-        timeout: 60_000
-      }
-    );
+        max_tokens: 1000
+      })
+    });
 
-    const parsed = JSON.parse(data.choices[0].message.content);
-    if (!parsed || !parsed.type || !parsed.value) {
-      throw new Error('LLM returned invalid structure');
+    if (!response.ok) {
+      throw new Error(`OpenRouter API error: ${response.status} ${response.statusText}`);
     }
-    return parsed;
+
+    const data = await response.json();
+    const answer = data.choices?.[0]?.message?.content;
+    
+    if (!answer) {
+      throw new Error('Empty response from OpenRouter');
+    }
+
+    try {
+      return JSON.parse(answer);
+    } catch (e) {
+      throw new Error(`LLM response is not valid JSON: ${answer}`);
+    }
   }
 }
+
+export { SelectorAI };

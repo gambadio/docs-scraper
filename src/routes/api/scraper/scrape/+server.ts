@@ -1,28 +1,28 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { scraperService } from '$lib/server/services/scraperInstance';
-import { v4 as uuidv4 } from 'uuid';
 
 export const POST: RequestHandler = async ({ request }) => {
   try {
-    const { baseUrl, urls } = await request.json();
+    const body = await request.json();
     
-    if (!baseUrl || !urls || !Array.isArray(urls)) {
-      return json({ error: 'Invalid request parameters' }, { status: 400 });
-    }
-
-    const sessionId = uuidv4();
-    
-    // Start scraping in background
-    scraperService.startScraping(baseUrl, urls, sessionId);
-    
-    return json({ 
-      message: 'Scraping started',
-      sessionId,
-      totalPages: urls.length 
+    // Proxy the request to the backend Express server
+    const response = await fetch('http://localhost:3001/api/scraper/scrape', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
     });
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      return json(data, { status: response.status });
+    }
+    
+    return json(data);
   } catch (error: any) {
-    console.error('Scraping error:', error);
-    return json({ error: error.message }, { status: 500 });
+    console.error('Scraping proxy error:', error);
+    return json({ error: 'Failed to connect to backend server' }, { status: 500 });
   }
 };
