@@ -3,20 +3,13 @@
   import AnalysisResults from '$lib/components/AnalysisResults.svelte';
   import ScrapingProgress from '$lib/components/ScrapingProgress.svelte';
   import { appState } from '$lib/stores/appState';
+  import { analyzeUrl, startScraping, getProgress, downloadPdfs } from '../services/api';
 
   let progressInterval: ReturnType<typeof setInterval>;
 
   async function handleUrlSubmit(event: CustomEvent) {
     try {
-      const response = await fetch('/api/scraper/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: event.detail.url })
-      });
-      
-      if (!response.ok) throw new Error('Failed to analyze URL');
-      
-      const analysis = await response.json();
+      const analysis = await analyzeUrl(event.detail.url);
       appState.setAnalysis(analysis);
     } catch (err) {
       console.error(err);
@@ -26,18 +19,7 @@
   async function handleAiAnalysis() {
     if (!$appState.analysis) return;
     try {
-      const response = await fetch('/api/scraper/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          url: $appState.analysis.baseUrl,
-          forceAi: true 
-        })
-      });
-      
-      if (!response.ok) throw new Error('Failed to analyze URL with AI');
-      
-      const analysis = await response.json();
+      const analysis = await analyzeUrl($appState.analysis.baseUrl, true);
       appState.setAnalysis(analysis);
     } catch (err) {
       console.error(err);
@@ -47,31 +29,21 @@
   async function handleStartScraping(event: CustomEvent) {
     if (!$appState.analysis) return;
     try {
-      const response = await fetch('/api/scraper/scrape', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          baseUrl: $appState.analysis.baseUrl, 
-          urls: event.detail.links 
-        })
-      });
-      
-      if (!response.ok) throw new Error('Failed to start scraping');
-      
-      const session = await response.json();
+      const session = await startScraping($appState.analysis.baseUrl, event.detail.links);
       appState.startScraping(session.sessionId, event.detail.links.length);
       
       progressInterval = setInterval(async () => {
         if (!$appState.sessionId) return;
         
-        const progressResponse = await fetch(`/api/scraper/progress/${$appState.sessionId}`);
-        if (!progressResponse.ok) return;
-        
-        const newProgress = await progressResponse.json();
-        appState.updateProgress(newProgress);
-        
-        if (newProgress.status === 'completed' || newProgress.status === 'failed') {
-          clearInterval(progressInterval);
+        try {
+          const newProgress = await getProgress($appState.sessionId);
+          appState.updateProgress(newProgress);
+          
+          if (newProgress.status === 'completed' || newProgress.status === 'failed') {
+            clearInterval(progressInterval);
+          }
+        } catch (err) {
+          console.error('Progress update error:', err);
         }
       }, 2000);
 
@@ -88,7 +60,7 @@
   async function handleDownload() {
     if (!$appState.sessionId) return;
     try {
-      window.location.href = `/api/scraper/download/${$appState.sessionId}`;
+      await downloadPdfs($appState.sessionId);
     } catch (err) {
       console.error(err);
     }

@@ -6,7 +6,15 @@
 
   let selectedLinks: string[] = [];
   $: if (analysis?.links) {
-    selectedLinks = analysis.links.map(link => link.url);
+    // If AI selection was applied, only select links marked as selected
+    if (analysis.aiSelectionApplied) {
+      selectedLinks = analysis.links
+        .filter(link => link.selected)
+        .map(link => link.url);
+    } else {
+      // Otherwise, select all links by default
+      selectedLinks = analysis.links.map(link => link.url);
+    }
   }
 
   const dispatch = createEventDispatcher();
@@ -62,6 +70,12 @@
         <button class="ai-btn" on:click={triggerAiAnalysis}>
           Use AI Analysis
         </button>
+      </div>
+      {/if}
+      
+      {#if analysis.aiSelectionApplied}
+      <div class="ai-notice ai-success">
+        <p>🤖 AI has preselected {selectedLinks.length} important documentation links from {analysis.total} total links found.</p>
       </div>
       {/if}
   
@@ -328,5 +342,14 @@
   }
   .ai-btn:active {
     transform: translateY(0);
+  }
+  
+  .ai-notice.ai-success {
+    background-color: var(--bauhaus-blue);
+    color: var(--text-light);
+    margin-bottom: 2rem;
+  }
+  .ai-notice.ai-success p {
+    margin: 0;
   }
 </style>

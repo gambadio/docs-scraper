@@ -3,6 +3,7 @@ import { writable } from 'svelte/store';
 export interface Link {
   url: string;
   title: string;
+  selected?: boolean;
 }
 
 export interface Analysis {
@@ -10,6 +11,7 @@ export interface Analysis {
   links: Link[];
   aiAvailable?: boolean;
   total?: number;
+  aiSelectionApplied?: boolean;
 }
 
 export interface Progress {

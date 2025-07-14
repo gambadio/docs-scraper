@@ -7,6 +7,7 @@ import { join } from 'path';
 import archiver from 'archiver';
 import { v4 as uuidv4 } from 'uuid';
 import { SelectorAI } from './SelectorAI.js';
+import { LinkSelectorAI } from './LinkSelectorAI.js';
 import { execSync } from 'child_process';
 
 puppeteer.use(StealthPlugin());
@@ -16,12 +17,14 @@ class ScraperService {
   browser;
   browserLaunchPromise;
   ai;
+  linkSelector;
 
   constructor() {
     this.sessions = new Map();
     this.browser = null;
     this.browserLaunchPromise = null;
     this.ai = new SelectorAI();
+    this.linkSelector = new LinkSelectorAI();
   }
 
   async analyzeDocumentation(url, forceAi = false) {
@@ -97,11 +100,20 @@ class ScraperService {
         return true;
       });
 
+      let finalLinks = clean;
+      
+      // Apply AI selection if more than 60 links
+      if (clean.length > 60) {
+        console.log(`Found ${clean.length} links, applying AI selection...`);
+        finalLinks = await this.linkSelector.selectImportantLinks(clean);
+      }
+
       return { 
         baseUrl: url, 
-        links: clean.slice(0, 50), 
+        links: finalLinks, 
         total: clean.length,
-        aiAvailable: clean.length === 0 || clean.length < 5
+        aiAvailable: clean.length === 0 || clean.length < 5,
+        aiSelectionApplied: clean.length > 60
       };
     } catch (error) {
       console.error('Analysis error:', error);
@@ -167,13 +179,37 @@ class ScraperService {
     session.pdfPath = tempDir;
     for (let i = 0; i < urls.length; i++) {
       session.progress.current = i + 1;
-      try {
-        await this._scrapePage(urls[i], tempDir, i);
-        session.progress.completed++;
-      } catch (error) {
-        console.error(`Failed to scrape ${urls[i]}:`, error.message);
-        session.progress.failed++;
-        session.progress.errors.push({ url: urls[i], error: error.message });
+      let retries = 0;
+      const maxRetries = 2;
+      let success = false;
+      
+      while (retries <= maxRetries && !success) {
+        try {
+          const pdfSize = await this._scrapePage(urls[i], tempDir, i);
+          
+          // If PDF is too small, log it but don't retry for now
+          if (pdfSize < 5000) {
+            console.warn(`⚠️  PDF is suspiciously small for ${urls[i]} (${pdfSize} bytes)`);
+            // Disabling retry for now to avoid repetitive attempts
+            // retries++;
+            // await new Promise(resolve => setTimeout(resolve, 3000));
+            // continue;
+          }
+          
+          session.progress.completed++;
+          success = true;
+        } catch (error) {
+          console.error(`Failed to scrape ${urls[i]} (attempt ${retries + 1}):`, error.message);
+          
+          if (retries < maxRetries) {
+            retries++;
+            await new Promise(resolve => setTimeout(resolve, 3000)); // Wait before retry
+          } else {
+            session.progress.failed++;
+            session.progress.errors.push({ url: urls[i], error: error.message });
+            break;
+          }
+        }
       }
     }
     session.progress.status = session.progress.failed === urls.length ? 'failed' : 'completed';
@@ -185,19 +221,92 @@ class ScraperService {
       const browser = await this._getBrowser();
       page = await browser.newPage();
       await page.setViewport({ width: 1280, height: 1024 });
-      await page.goto(url, { waitUntil: 'networkidle0', timeout: 60_000 });
+      
+      // Set user agent to avoid bot detection
+      await page.setUserAgent(
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ' +
+        'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+      );
+      
+      // Navigate with multiple wait conditions
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 60_000 });
+      
+      // Wait for common content selectors
+      try {
+        await page.waitForSelector('main, article, .content, .docs-content, [role="main"], .markdown-body, .documentation-content, .api-content', { 
+          timeout: 5000 
+        });
+      } catch (e) {
+        // If no main content found, wait a bit anyway
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      }
+      
+      // Special handling for known documentation frameworks
+      const pageUrl = new URL(url);
+      if (pageUrl.hostname.includes('openai.com')) {
+        // OpenAI docs use React and need more time
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        try {
+          await page.waitForSelector('.docs-body, .api-content', { timeout: 5000 });
+        } catch (e) {}
+      }
+      
+      // Additional wait to ensure dynamic content loads
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Check if page has meaningful content
+      const contentInfo = await page.evaluate(() => {
+        const body = document.body;
+        const text = body ? body.innerText.trim() : '';
+        const mainContent = document.querySelector('main, article, .content, .docs-content, [role="main"]');
+        const mainText = mainContent ? mainContent.innerText.trim() : '';
+        return {
+          bodyLength: text.length,
+          mainLength: mainText.length,
+          hasMain: !!mainContent,
+          firstChars: text.substring(0, 200)
+        };
+      });
+      
+      console.log(`Content check for ${url}:`, {
+        bodyLength: contentInfo.bodyLength,
+        mainLength: contentInfo.mainLength,
+        hasMain: contentInfo.hasMain
+      });
+      
+      if (contentInfo.bodyLength < 100) {
+        console.warn(`Page appears empty: ${url}`);
+        console.warn(`First 200 chars: "${contentInfo.firstChars}"`);
+        // Try waiting more for dynamic content
+        await new Promise(resolve => setTimeout(resolve, 5000));
+      }
+      
+      // Remove navigation elements
       await page.evaluate(() => {
-        const toRemove = document.querySelectorAll('nav, header, footer, .sidebar, .navigation, .menu');
+        const toRemove = document.querySelectorAll('nav, header, footer, .sidebar, .navigation, .menu, .navbar, aside');
         toRemove.forEach(el => el.remove());
       });
-      const title = await page.title();
+      
+      const title = await page.title() || 'Untitled';
       const filename = `${String(index + 1).padStart(3, '0')}-${this._sanitizeFilename(title)}.pdf`;
       const filepath = join(outputDir, filename);
+      
       await page.pdf({
-        path: filepath, format: 'A4', printBackground: true,
-        margin: { top: '1cm', right: '1cm', bottom: '1cm', left: '1cm' }
+        path: filepath, 
+        format: 'A4', 
+        printBackground: true,
+        margin: { top: '1cm', right: '1cm', bottom: '1cm', left: '1cm' },
+        preferCSSPageSize: true
       });
-      console.log(`✓ Scraped: ${title}`);
+      
+      // Verify PDF was created and has content
+      const stats = await fs.stat(filepath);
+      if (stats.size < 5000) { // Less than 5KB is suspiciously small
+        console.warn(`PDF seems too small (${stats.size} bytes): ${title}`);
+      }
+      
+      console.log(`✓ Scraped: ${title} (${stats.size} bytes)`);
+      return stats.size;
     } catch (error) {
       throw error;
     } finally {

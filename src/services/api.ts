@@ -1,12 +1,12 @@
 const API_BASE: string = 'http://localhost:3001/api';
 
-export async function analyzeUrl(url: string): Promise<any> {
+export async function analyzeUrl(url: string, forceAi: boolean = false): Promise<any> {
   const response = await fetch(`${API_BASE}/scraper/analyze`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ url }),
+    body: JSON.stringify({ url, forceAi }),
   });
 
   if (!response.ok) {
