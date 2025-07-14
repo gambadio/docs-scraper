@@ -11,13 +11,14 @@ This is a documentation scraper web application that converts online documentati
 **Hybrid Architecture:**
 - **Frontend**: SvelteKit application on port 5173
 - **Backend**: Express.js server on port 3001
-- **Communication**: Frontend proxies API calls to backend via `/api/scraper/*` routes
+- **Communication**: Frontend makes direct API calls to backend server at `http://localhost:3001/api`
 
 **Frontend Structure (SvelteKit):**
 1. Page routes in `src/routes/`
-2. API proxy routes in `src/routes/api/scraper/`
+2. API service layer in `src/services/api.ts` for backend communication
 3. Components in `src/lib/components/`
 4. State management via Svelte stores (`src/lib/stores/appState.ts`)
+5. Direct API calls to backend (no proxy routes)
 
 **Backend Structure (Express):**
 1. Entry point: `server/index.js`
@@ -30,7 +31,7 @@ This is a documentation scraper web application that converts online documentati
 - Web scraping: Puppeteer with stealth plugin
 - HTML parsing: Cheerio
 - AI integration: OpenRouter API (gpt-4.1-mini)
-- Session management: In-memory Map with UUID identifiers
+- Session management: In-memory Map with client-generated session IDs
 - File packaging: Archiver for ZIP creation
 
 ## Development Commands
@@ -65,6 +66,8 @@ Create a `.env` file in the project root:
 OPENROUTER_API_KEY=your_api_key_here
 ```
 
+The application uses dotenv for environment variable management.
+
 ## Key Implementation Details
 
 **URL Analysis Logic:**
@@ -72,6 +75,7 @@ OPENROUTER_API_KEY=your_api_key_here
 - Searches using selectors: `nav a`, `.sidebar a`, `.docs-sidebar a`, `.toc a`, etc.
 - AI fallback in `server/services/SelectorAI.js` when standard selectors fail
 - Filters links to same domain, limits to 50 results
+- Returns analysis with optional `aiAvailable` flag indicating if AI analysis is possible
 
 **PDF Generation:**
 - Located in `server/services/ScraperService.js:_scrapePage()`
@@ -80,16 +84,23 @@ OPENROUTER_API_KEY=your_api_key_here
 - Graceful error handling for individual page failures
 
 **Session Management:**
-- In-memory storage using Map with UUID keys
+- In-memory storage using Map with client-generated session IDs
+- Session IDs generated in frontend (`src/services/api.ts:generateSessionId()`)
 - Sessions tracked in `server/services/ScraperService.js`
 - Session data: urls array, progress tracking, ZIP file path
 - No persistence between server restarts
 
 **API Endpoints:**
 - `POST /api/scraper/analyze` - Analyze URL for navigation links
-- `POST /api/scraper/scrape` - Start scraping process
+- `POST /api/scraper/scrape` - Start scraping process with session ID
 - `GET /api/scraper/progress/:sessionId` - Get scraping progress
 - `GET /api/scraper/download/:sessionId` - Download ZIP file
+
+**Frontend State Management:**
+- AppState store in `src/lib/stores/appState.ts` manages workflow states
+- States: `input`, `analysis`, `scraping`
+- Analysis interface includes links array with optional `aiAvailable` and `total` fields
+- Progress tracking with status, completed/failed counts, and progress percentage
 
 ## Common Tasks
 
@@ -108,8 +119,13 @@ Change `CONCURRENT_LIMIT` in `server/services/ScraperService.js`
 **Modifying the UI workflow:**
 Main flow in `src/routes/+page.svelte` with state transitions in `src/lib/stores/appState.ts`
 
+**Working with the API service:**
+- All backend API calls are centralized in `src/services/api.ts`
+- Functions: `analyzeUrl()`, `startScraping()`, `getProgress()`, `downloadPdfs()`
+- Direct HTTP calls to backend server, no SvelteKit proxy routes
+
 **Adding API error handling:**
-- Frontend: Handle errors in `src/routes/api/scraper/*/+server.ts`
+- Frontend: Handle errors in `src/services/api.ts` functions
 - Backend: Add error handling in `server/routes/scraper.js`
 
 ## Important Notes
@@ -117,5 +133,6 @@ Main flow in `src/routes/+page.svelte` with state transitions in `src/lib/stores
 - Sessions are ephemeral - lost on server restart
 - No authentication on API endpoints
 - ZIP files are stored temporarily in `server/temp/` directory
-- Frontend API routes are proxies that forward to backend
+- Frontend makes direct API calls to backend (no proxy routes)
 - Rate limiting depends on target site's tolerance
+- AI analysis via OpenRouter requires API key in `.env` file
