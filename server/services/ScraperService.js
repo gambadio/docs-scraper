@@ -177,6 +177,9 @@ class ScraperService {
     const tempDir = join(process.cwd(), 'temp', sessionId);
     await fs.mkdir(tempDir, { recursive: true });
     session.pdfPath = tempDir;
+    
+    // Track PDFs that need reprocessing
+    const failedPdfs = [];
     for (let i = 0; i < urls.length; i++) {
       session.progress.current = i + 1;
       let retries = 0;
@@ -187,13 +190,10 @@ class ScraperService {
         try {
           const pdfSize = await this._scrapePage(urls[i], tempDir, i);
           
-          // If PDF is too small, log it but don't retry for now
+          // If PDF is too small, track it for reprocessing
           if (pdfSize < 5000) {
             console.warn(`⚠️  PDF is suspiciously small for ${urls[i]} (${pdfSize} bytes)`);
-            // Disabling retry for now to avoid repetitive attempts
-            // retries++;
-            // await new Promise(resolve => setTimeout(resolve, 3000));
-            // continue;
+            failedPdfs.push({ url: urls[i], index: i, size: pdfSize });
           }
           
           session.progress.completed++;
@@ -212,6 +212,22 @@ class ScraperService {
         }
       }
     }
+    
+    // Post-process failed PDFs with alternative method
+    if (failedPdfs.length > 0) {
+      console.log(`\n🔄 Reprocessing ${failedPdfs.length} failed PDFs with alternative method...`);
+      for (const failed of failedPdfs) {
+        try {
+          console.log(`Reprocessing: ${failed.url}`);
+          await this._scrapePageAlternative(failed.url, tempDir, failed.index);
+          // Update progress if successful
+          session.progress.errors = session.progress.errors.filter(e => e.url !== failed.url);
+        } catch (error) {
+          console.error(`Alternative scraping also failed for ${failed.url}:`, error.message);
+        }
+      }
+    }
+    
     session.progress.status = session.progress.failed === urls.length ? 'failed' : 'completed';
   }
 
@@ -349,6 +365,111 @@ class ScraperService {
       await this.browser.close();
       this.browser = null;
       this.browserLaunchPromise = null;
+    }
+  }
+
+  async _scrapePageAlternative(url, outputDir, index) {
+    let page;
+    try {
+      const browser = await this._getBrowser();
+      page = await browser.newPage();
+      
+      // Larger viewport for better rendering
+      await page.setViewport({ width: 1920, height: 1080 });
+      
+      // Set user agent
+      await page.setUserAgent(
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ' +
+        'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+      );
+      
+      // Force screen media type instead of print
+      await page.emulateMediaType('screen');
+      
+      // Navigate and wait for everything
+      await page.goto(url, { waitUntil: 'networkidle0', timeout: 60_000 });
+      
+      // Wait for fonts and styles to load
+      await page.evaluateHandle('document.fonts.ready');
+      
+      // Scroll through the page to trigger lazy loading
+      await page.evaluate(async () => {
+        await new Promise((resolve) => {
+          let totalHeight = 0;
+          const distance = 500;
+          const timer = setInterval(() => {
+            const scrollHeight = document.body.scrollHeight;
+            window.scrollBy(0, distance);
+            totalHeight += distance;
+            
+            if (totalHeight >= scrollHeight) {
+              clearInterval(timer);
+              window.scrollTo(0, 0); // Scroll back to top
+              resolve();
+            }
+          }, 100);
+        });
+      });
+      
+      // Wait after scrolling
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      
+      // Force all content to be visible and remove print-specific hiding
+      await page.addStyleTag({
+        content: `
+          * { 
+            visibility: visible !important; 
+            display: initial !important;
+            opacity: 1 !important;
+          }
+          @media print {
+            * { 
+              visibility: visible !important;
+              display: initial !important; 
+              opacity: 1 !important;
+            }
+          }
+          /* Hide only navigation elements */
+          nav, header, footer, .sidebar, .navigation, .menu, .navbar, aside {
+            display: none !important;
+          }
+          /* Ensure main content is visible */
+          main, article, .content, .docs-content, [role="main"] {
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+          }
+        `
+      });
+      
+      // Additional wait for rendering
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      const title = await page.title() || 'Untitled';
+      const filename = `${String(index + 1).padStart(3, '0')}-${this._sanitizeFilename(title)}.pdf`;
+      const filepath = join(outputDir, filename);
+      
+      // Generate PDF with screen media type
+      await page.pdf({
+        path: filepath,
+        format: 'A4',
+        printBackground: true,
+        margin: { top: '1cm', right: '1cm', bottom: '1cm', left: '1cm' },
+        preferCSSPageSize: false,
+        displayHeaderFooter: false,
+        scale: 0.8 // Slightly smaller scale to fit more content
+      });
+      
+      const stats = await fs.stat(filepath);
+      console.log(`✅ Successfully reprocessed: ${title} (${stats.size} bytes)`);
+      
+      return stats.size;
+    } catch (error) {
+      throw error;
+    } finally {
+      if (page && !page.isClosed()) {
+        await page.close().catch(() => {});
+      }
     }
   }
 
