@@ -46,3 +46,10 @@ Thumbs.db
 
 # Coverage directory
 coverage/
+
+#temporary files
+temp/
+.gitignore
+vite.config.js.timestamp-1753726049640-4034927d87ac2.mjs
+.gitignore
+CLAUDE.md

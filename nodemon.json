@@ -1,0 +1,17 @@
+{
+  "watch": ["server/"],
+  "ignore": [
+    "temp/",
+    "dist/",
+    "build/",
+    "node_modules/",
+    "*.log",
+    "*.tmp",
+    "*.backup",
+    "*.timestamp-*",
+    "vite.config.js.backup",
+    "vite.config.js.timestamp-*"
+  ],
+  "ext": "js,json",
+  "delay": "1000"
+}

@@ -1,5 +1,4 @@
-import puppeteer from 'puppeteer-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import puppeteer from 'puppeteer';
 import { load } from 'cheerio';
 import fs from 'fs/promises';
 import { createWriteStream } from 'fs';
@@ -9,8 +8,6 @@ import { v4 as uuidv4 } from 'uuid';
 import { SelectorAI } from './SelectorAI.js';
 import { LinkSelectorAI } from './LinkSelectorAI.js';
 import { execSync } from 'child_process';
-
-puppeteer.use(StealthPlugin());
 
 class ScraperService {
   sessions;
@@ -341,10 +338,17 @@ class ScraperService {
 
   async _launchBrowser() {
     try {
-      const puppeteerExecutablePath = execSync('npx puppeteer browsers where chrome', { encoding: 'utf8' }).trim();
+      let executablePath;
+      try {
+        executablePath = execSync('npx puppeteer browsers where chrome', { encoding: 'utf8', timeout: 5000 }).trim();
+      } catch (error) {
+        console.log('Puppeteer Chrome not found, using system Chrome');
+        executablePath = undefined;
+      }
+      
       const browser = await puppeteer.launch({
         headless: true,
-        executablePath: puppeteerExecutablePath || undefined,
+        executablePath: executablePath || undefined,
         args: [
           '--no-sandbox', '--disable-setuid-sandbox',
           '--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage'
