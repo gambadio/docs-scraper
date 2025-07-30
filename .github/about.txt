@@ -1,0 +1,1 @@
+Docs Scraper is a web application that scrapes online documentation sites into downloadable PDFs bundled as ZIP archives. Built with SvelteKit frontend and Node.js backend using Puppeteer automation; it intelligently detects navigation links—even leveraging AI when needed—for comprehensive doc extraction.
